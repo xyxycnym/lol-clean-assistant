@@ -6,6 +6,8 @@ const crypto = require('crypto');
 // Champions, items, runes and summoner spells copied from the running client, so they always match its patch.
 // Icons already shipped with the offline snapshot are reused; only missing ones are copied in as data URIs.
 const KINDS = ['heroes', 'items', 'runes', 'spells'];
+// Catalogs the client does not provide; English / Korean versions ship with the app.
+const BUNDLED_ONLY = ['augments', 'chess', 'equip', 'races', 'jobs'];
 const { normalize } = require('../renderer/i18n.js');
 const IMAGE_LIMIT = 400 * 1024;
 
@@ -46,8 +48,8 @@ class GameData {
   info(language = 'zh-CN') { return this.matches(language) ? { source: 'client', version: this.meta.version, syncedAt: this.meta.syncedAt, offlineVersion: this.offlineVersionFor(language) } : { source: 'offline', version: this.offlineVersionFor(language), syncedAt: null, offlineVersion: this.offlineVersionFor(language) }; }
   layout() { return this.meta && this.meta.runeLayout || null; }
   catalog(kind, language = 'zh-CN') {
-    if (!KINDS.includes(kind) && kind !== 'augments') return null;
-    if (!this.matches(language) || kind === 'augments') {
+    if (!KINDS.includes(kind) && !BUNDLED_ONLY.includes(kind)) return null;
+    if (!this.matches(language) || BUNDLED_ONLY.includes(kind)) {
       if (language === 'zh-CN') return null;
       try { const value = JSON.parse(fs.readFileSync(path.join(this.assets, 'json', language, kind + '.json'), 'utf8')); return Array.isArray(value) ? value : null; } catch (_) { return null; }
     }
@@ -94,7 +96,13 @@ class GameData {
       for (const detail of batch) if (detail && detail.id) heroes.push(await this.hero(lcu, detail, offlineHeroes.get(Number(detail.id))));
     }
     if (heroes.length < ids.length * 0.9) throw new Error('英雄资料读取不完整，请稍后重试');
-    for (const [id, hero] of offlineHeroes) if (!(id > 0 && id < 60000)) heroes.push(hero);
+    // Special variants (IDs 60000+) only need a name in the client's language; art and icons come from the offline entry.
+    const variants = new Map(summary.map(item => [Number(item.id), item]));
+    for (const [id, hero] of offlineHeroes) {
+      if (id > 0 && id < 60000) continue;
+      const variant = variants.get(id);
+      heroes.push(variant && locale !== 'zh-CN' ? { ...hero, name: variant.name, title: '', description: '', alias: variant.alias || hero.alias } : hero);
+    }
 
     const itemList = [];
     for (const item of items) {

@@ -116,7 +116,7 @@ resources/app/
 - Auto-accept, auto-pick and the other automations use the client's official local API. They don't modify game files or read game memory, but using any third-party tool carries some risk of action from the game operator. Judge that risk for yourself.
 - OP.GG data comes from an undocumented API used by their website and may change or stop working at any time. If it does, only recommendations and predictions are affected.
 - The bundled data is patch 16.18 for Chinese and 16.20 for English / Korean. Once connected, it updates to the client's patch (when the client language matches the interface language).
-- TFT data (units, items, traits) and some augments are currently available in Chinese only.
+- English and Korean TFT and augment data are generated from Riot's official data. 8 summoned units (such as Sand Soldier) and 5 special items are not in that data and were translated by hand.
 
 ## Disclaimer
 

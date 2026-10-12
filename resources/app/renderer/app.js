@@ -126,7 +126,7 @@
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
   function esc(value) { return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[char])); }
-  function plain(value) { return String(value == null ? '' : value).replace(/<br\s*\/?\s*>/gi, '\n').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim(); }
+  function plain(value) { return String(value == null ? '' : value).replace(/<br\s*\/?\s*>/gi, '\n').replace(/<[^>]*>/g, '').replace(/%i:[A-Za-z]+%/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim(); }
   function number(value, fallback = 0) { const result = Number(value); return Number.isFinite(result) ? result : fallback; }
   function formatNumber(value) { return Math.round(number(value)).toLocaleString(locale()); }
   function checked(value) { return value ? ' checked' : ''; }
