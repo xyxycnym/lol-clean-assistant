@@ -1,7 +1,7 @@
 {
   "name": "league-local-clean-assistant",
   "productName": "联盟助手纯净版",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "main": "main.cjs",
   "description": "本机客户端功能与离线资料，无厂商账号或云服务；可选连接 OP.GG 获取推荐出装与胜率数据。"
