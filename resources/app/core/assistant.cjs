@@ -10,6 +10,8 @@ const { predict, assignPositions } = require('./predict.cjs');
 const { translate } = require('../renderer/i18n.js');
 
 const ARAM_QUEUES = [450, 2400];
+const MAYHEM_QUEUES = [2400];
+const RARITY = { 1: 'silver', 4: 'gold', 8: 'prismatic' };
 const RIFT_QUEUES = [0, 400, 420, 430, 440, 480, 490, 830, 840, 850];
 function analysisMode(queueId) { const id = Number(queueId); return ARAM_QUEUES.includes(id) ? 'aram' : RIFT_QUEUES.includes(id) ? 'ranked' : ''; }
 
@@ -88,6 +90,25 @@ class Assistant extends EventEmitter {
     const meta = await this.opgg.meta(this.opggOptions(mode)); const champion = meta.champions[championId];
     return champion && Object.values(champion.positions).sort((a, b) => b.play - a.play).map(item => item.name)[0] || 'MID';
   }
+  // Augments OP.GG ranks highest for a champion in ARAM: Mayhem, grouped by rarity (each in-game offer is one rarity).
+  async getMayhemAugments(championId) {
+    if (!this.state.settings.onlineData) throw new Error('在线数据已关闭，可在工具箱中开启');
+    const hero = this.getCatalog('heroes').find(item => Number(item.id) === Number(championId));
+    if (!hero || !hero.alias) throw new Error('无效的英雄');
+    const ranked = await this.opgg.mayhemAugments(hero.alias);
+    if (!this.augmentIcons) { try { this.augmentIcons = JSON.parse(fs.readFileSync(path.join(this.assets, 'json', 'augment-icons.json'), 'utf8')); } catch (_) { this.augmentIcons = {}; } }
+    const base = new Map(JSON.parse(fs.readFileSync(path.join(this.assets, 'json', 'augments.json'), 'utf8')).map(item => [Number(item.id), item]));
+    const groups = { prismatic: [], gold: [], silver: [] }; const used = new Set();
+    for (const { name, icon } of ranked) {
+      const candidates = (this.augmentIcons[icon] || []).filter(([id]) => base.has(id));
+      const byName = candidates.filter(([, english]) => english === name);
+      const pick = (byName.length ? byName : candidates).sort((a, b) => b[2] - a[2])[0];
+      if (!pick || used.has(pick[0])) continue;
+      const rarity = RARITY[base.get(pick[0]).rarity]; if (!rarity) continue;
+      used.add(pick[0]); if (groups[rarity].length < 8) groups[rarity].push(pick[0]);
+    }
+    return { championId: Number(championId), groups };
+  }
   async getBuild(championId, position, mode) {
     if (!this.state.settings.onlineData) throw new Error('在线数据已关闭，可在工具箱中开启');
     mode = mode === 'aram' ? 'aram' : 'ranked';
@@ -107,11 +128,16 @@ class Assistant extends EventEmitter {
       const key = [mode, ownChampion, position, settings.opggRegion, settings.opggTier].join(':');
       if (key !== this.analysisKey) {
         this.analysisKey = key; this.state.recommendation = { championId: ownChampion, position, mode, loading: true };
+        if (MAYHEM_QUEUES.includes(Number(this.state.queueId))) {
+          this.state.recommendation.mayhem = true;
+          this.getMayhemAugments(ownChampion).then(augments => { if (this.analysisKey === key) { this.state.recommendation = { ...this.state.recommendation, augments }; this.emit('state', this.snapshot()); } })
+            .catch(error => { if (this.analysisKey === key) { this.state.recommendation = { ...this.state.recommendation, augmentsError: error.message }; this.emit('state', this.snapshot()); } });
+        }
         (async () => {
           // Position not assigned (normal draft, custom): use the champion's most played role.
           return this.opgg.build(ownChampion, position || await this.mainPosition(ownChampion, mode), this.opggOptions(mode));
-        })().then(build => { if (this.analysisKey === key) { this.state.recommendation = { championId: ownChampion, position: build.position, mode, build }; this.emit('state', this.snapshot()); } })
-          .catch(error => { if (this.analysisKey === key) { this.state.recommendation = { championId: ownChampion, position, mode, error: error.message }; this.emit('state', this.snapshot()); } });
+        })().then(build => { if (this.analysisKey === key) { this.state.recommendation = { ...this.state.recommendation, loading: false, position: build.position, build }; this.emit('state', this.snapshot()); } })
+          .catch(error => { if (this.analysisKey === key) { this.state.recommendation = { ...this.state.recommendation, loading: false, error: error.message }; this.emit('state', this.snapshot()); } });
       }
     }
     const complete = team => team.length === 5 && team.every(player => Number(player.championId) > 0);

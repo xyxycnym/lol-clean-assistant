@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld('cleanAssistant', Object.freeze({
   createLobby: id => call('createLobby', id), setProfile: value => call('setProfile', value),
   getClientSettings: () => call('getClientSettings'), saveClientSettings: value => call('saveClientSettings', value),
   exportConfig: () => call('exportConfig'), importConfig: () => call('importConfig'),
-  getBuild: (championId, position, mode) => call('getBuild', championId, position, mode), applyBuildItems: value => call('applyBuildItems', value),
+  getBuild: (championId, position, mode) => call('getBuild', championId, position, mode), getMayhemAugments: championId => call('getMayhemAugments', championId), applyBuildItems: value => call('applyBuildItems', value),
   syncGameData: () => call('syncGameData'), getRuneLayout: () => call('getRuneLayout'),
   onState: callback => { if (typeof callback !== 'function') return () => {}; const listener = (_event, value) => callback(value); ipcRenderer.on('clean:state', listener); return () => ipcRenderer.removeListener('clean:state', listener); }
 }));

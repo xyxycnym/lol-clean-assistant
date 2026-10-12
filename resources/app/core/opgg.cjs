@@ -3,12 +3,39 @@ const https = require('https');
 
 // The only outside host this program talks to. Requests are built from validated parts, never from free text.
 const HOST = 'lol-api-champion.op.gg';
+// ARAM: Mayhem augment rankings exist only on OP.GG's website, so that page is read for them.
+const SITE = 'op.gg';
 const REGIONS = ['global', 'kr', 'na', 'euw', 'eune', 'jp', 'br', 'lan', 'las', 'oce', 'tr', 'ru', 'sg', 'tw', 'vn', 'th', 'ph'];
 const TIERS = ['all', 'gold_plus', 'platinum_plus', 'emerald_plus', 'diamond_plus', 'master_plus'];
 const POSITIONS = ['TOP', 'JUNGLE', 'MID', 'ADC', 'SUPPORT'];
 const ROLE_TO_POSITION = { top: 'TOP', jungle: 'JUNGLE', middle: 'MID', bottom: 'ADC', utility: 'SUPPORT' };
 const POSITION_TO_ROLE = Object.fromEntries(Object.entries(ROLE_TO_POSITION).map(([role, position]) => [position, role]));
 const TTL = 3 * 3600 * 1000;
+
+function fetchPage(pathname, timeout = 12000) {
+  return new Promise((resolve, reject) => {
+    const request = https.get({ hostname: SITE, path: pathname, agent: false, headers: { Accept: 'text/html', 'Accept-Language': 'en-US', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36' } }, response => {
+      const status = response.statusCode || 0;
+      if (status !== 200) { response.resume(); reject(new Error(status === 404 ? 'OP.GG 暂无这项数据' : 'OP.GG 暂不可用（' + status + '）')); return; }
+      const chunks = []; let size = 0;
+      response.on('data', chunk => { size += chunk.length; if (size > 4194304) { response.destroy(); reject(new Error('OP.GG 响应过大')); } else chunks.push(chunk); });
+      response.on('error', () => reject(new Error('OP.GG 响应中断')));
+      response.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    });
+    request.setTimeout(timeout, () => request.destroy(new Error('OP.GG 响应超时')));
+    request.on('error', error => reject(new Error(error.message === 'OP.GG 响应超时' ? error.message : '无法连接 OP.GG，请检查网络')));
+  });
+}
+// Augments in the order OP.GG ranks them for the champion: [{ name, icon }].
+function parseMayhemAugments(html) {
+  const decode = text => text.replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const seen = new Set(); const list = [];
+  for (const match of html.matchAll(/<img[^>]*?alt="([^"]*)"[^>]*?aram-augment\/([A-Za-z0-9_]+)_large\.png/g)) {
+    const name = decode(match[1]); const icon = match[2].toLowerCase(); const key = icon + '|' + name;
+    if (seen.has(key)) continue; seen.add(key); list.push({ name, icon });
+  }
+  return list;
+}
 
 function fetchJson(pathname, timeout = 9000) {
   return new Promise((resolve, reject) => {
@@ -72,7 +99,7 @@ function normalizeMeta(list, opts, version) {
 }
 
 class OpggClient {
-  constructor(options = {}) { this.fetch = options.fetch || fetchJson; this.cache = new Map(); this.pending = new Map(); }
+  constructor(options = {}) { this.fetch = options.fetch || fetchJson; this.fetchPage = options.fetchPage || fetchPage; this.cache = new Map(); this.pending = new Map(); }
   cached(key, loader) {
     const hit = this.cache.get(key);
     if (hit && Date.now() - hit.at < TTL) return Promise.resolve(hit.value);
@@ -92,6 +119,15 @@ class OpggClient {
     const path = opts.mode === 'aram' ? `/api/${opts.region}/champions/aram/${id}/none` : `/api/${opts.region}/champions/ranked/${id}/${pos}?tier=${opts.tier}`;
     return this.cached('build:' + path, async () => { const result = await this.fetch(path); return normalizeBuild(result.data || {}, id, pos, opts, result.meta && result.meta.version || ''); });
   }
+  mayhemAugments(alias) {
+    const slug = String(alias || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!slug || slug.length > 40) return Promise.reject(new Error('无效的英雄'));
+    return this.cached('mayhem:' + slug, async () => {
+      const list = parseMayhemAugments(await this.fetchPage('/lol/modes/aram-mayhem/' + slug + '/augments'));
+      if (!list.length) throw new Error('OP.GG 返回的数据格式不正确');
+      return list;
+    });
+  }
   meta(value) {
     const opts = options(value);
     const path = opts.mode === 'aram' ? `/api/${opts.region}/champions/aram?tier=all` : `/api/${opts.region}/champions/ranked?tier=${opts.tier}`;
@@ -99,4 +135,4 @@ class OpggClient {
   }
 }
 
-module.exports = { OpggClient, normalizeBuild, normalizeMeta, options, REGIONS, TIERS, POSITIONS, ROLE_TO_POSITION, POSITION_TO_ROLE, HOST };
+module.exports = { OpggClient, parseMayhemAugments, normalizeBuild, normalizeMeta, options, REGIONS, TIERS, POSITIONS, ROLE_TO_POSITION, POSITION_TO_ROLE, HOST };

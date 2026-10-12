@@ -18,6 +18,7 @@ A League of Legends desktop assistant that talks only to the client on your own 
 | **Match Board** | During champ select and in game, shows all 10 players lined up by position: rank, recent win rate, KDA and last 5 games, over champion splash art |
 | **Draft win prediction** | Once both teams are locked in, estimates your team's win rate and shows the matchup win rate for each lane; hidden enemy positions are inferred from each champion's usual role |
 | **Recommended builds** | In champ select, shows runes, summoner spells, items and skill order for your champion and applies them to the client in one click; the Champion Builds page looks up any champion |
+| **ARAM: Mayhem augments** | In ARAM: Mayhem champ select, lists the augments that suit your champion best, grouped by Prismatic / Gold / Silver (ranking from OP.GG), so you know which one to take when it shows up in game |
 | **Match History** | Searches recent games by summoner name or Riot ID, filters by result, mode and champion, and shows every player in a game |
 | **Automation** | Auto-accept, auto-start queue, play again after a game, and auto-hover / ban champions by per-position priority |
 | **Library** | Champion abilities, items, runes, summoner spells, augments, TFT units / items / traits |
@@ -53,7 +54,7 @@ Settings, presets and synced game data are stored in `clean-data/` inside the pr
 |---|---|---|
 | Games, history, ranks, rune pages, item sets | The League client on this PC (LCU, `127.0.0.1`) | No |
 | Champion, item, rune and summoner spell data | The client's own game data, synced when the patch changes; a bundled offline snapshot otherwise | No |
-| Recommended builds, champion / matchup win rates | OP.GG (`lol-api-champion.op.gg`) | Yes, can be turned off in **Tools → Data sources** |
+| Recommended builds, champion / matchup win rates, ARAM: Mayhem augment rankings | OP.GG (`lol-api-champion.op.gg`, `op.gg`) | Yes, can be turned off in **Tools → Data sources** |
 
 - The interface process is completely blocked from the network (CSP + request blocking). All requests are made by the main process, and only to the addresses above.
 - Only the champion ID, position, region and rank range are sent to OP.GG. **No account, summoner name or game data is ever sent.**

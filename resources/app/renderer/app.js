@@ -116,7 +116,7 @@
   let clientRead = false;
   let clientDirty = false;
   let clientAdvancedOpen = false;
-  let buildPage = {championId: '', position: '', mode: 'ranked', build: null, loading: false, error: ''};
+  let buildPage = {championId: '', position: '', mode: 'ranked', mayhem: false, build: null, loading: false, error: '', augments: null, augmentsError: ''};
   let dataVersion = '';
   const positionNames = {TOP: '上路', JUNGLE: '打野', MID: '中路', ADC: '下路', SUPPORT: '辅助', none: '大乱斗'};
   const roleToPosition = {top: 'TOP', jungle: 'JUNGLE', middle: 'MID', bottom: 'ADC', utility: 'SUPPORT'};
@@ -242,7 +242,7 @@
   }
   async function reloadGameData() {
     catalogs.clear(); runeDraft = null;
-    try { await Promise.all([loadRuneLayout(), ...['heroes', 'items', 'runes', 'spells'].map(getCatalog)]); renderPage(); } catch (error) { toast(error.message, true); }
+    try { await Promise.all([loadRuneLayout(), ...['heroes', 'items', 'runes', 'spells', 'augments'].map(getCatalog)]); renderPage(); } catch (error) { toast(error.message, true); }
   }
   async function refreshState() { const result = await invoke('refresh'); ingest(result); if (!result || !result.connection) await reloadState(); }
   async function getCatalog(kind) {
@@ -460,11 +460,24 @@
     }
     return header + `<div class="build-grid${compact ? ' compact' : ''}">${sections.join('')}</div>`;
   }
+  function augmentsHtml(data, error, loading) {
+    const head = '<div class="build-section-head"><h3>海克斯强化推荐</h3><small>排名来自 OP.GG 海克斯大乱斗数据，靠前的更适合</small></div>';
+    if (error) return `<section class="augment-panel">${head}<p class="subtle">${esc(t('海克斯强化推荐未能获取：{0}').replace('{0}', t(error)))}</p></section>`;
+    if (loading || !data) return `<section class="augment-panel">${head}<div class="loading-state"><span class="spinner" aria-hidden="true"></span>正在获取海克斯强化推荐…</div></section>`;
+    const rows = [['prismatic', '棱彩'], ['gold', '黄金'], ['silver', '白银']].map(([key, label]) => {
+      const ids = data.groups[key] || [];
+      if (!ids.length) return '';
+      const chips = ids.map((id, index) => { const item = findCatalog('augments', id); const name = item ? itemName(item) : String(id); return `<span class="augment-chip" title="${esc(name)}"><i class="num">${index + 1}</i>${imageTag(item && item.image, '', 'augment-icon')}<span>${esc(name)}</span></span>`; }).join('');
+      return `<div class="augment-row rarity-${key}"><span class="rarity-label">${label}</span><div class="augment-list">${chips}</div></div>`;
+    }).join('');
+    return `<section class="augment-panel">${head}${rows}</section>`;
+  }
   function buildFor(source) { return source === 'dash' ? state.recommendation && state.recommendation.build : buildPage.build; }
   function recommendationHtml() {
     const rec = state.recommendation;
     if (!rec) return '';
-    const body = rec.build ? buildHtml(rec.build, 'dash', true) : rec.error ? `<div class="notice warning"><strong>推荐出装未能获取</strong><p>${esc(rec.error)}</p></div>` : '<div class="loading-state"><span class="spinner" aria-hidden="true"></span>正在获取推荐出装…</div>';
+    let body = rec.build ? buildHtml(rec.build, 'dash', true) : rec.error ? `<div class="notice warning"><strong>推荐出装未能获取</strong><p>${esc(rec.error)}</p></div>` : '<div class="loading-state"><span class="spinner" aria-hidden="true"></span>正在获取推荐出装…</div>';
+    if (rec.mayhem) body = augmentsHtml(rec.augments, rec.augmentsError, !rec.augments && !rec.augmentsError) + '<p class="mayhem-note">符文与出装为普通大乱斗数据</p>' + body;
     return `<details class="recommend-panel" data-remember="recommend" open><summary><span>推荐出装</span><small>${esc(heroName(rec.championId))}</small></summary><div class="recommend-body">${body}</div></details>`;
   }
   function forecastHtml() {
@@ -484,19 +497,25 @@
   function buildsHtml() {
     const settings = settingsValue();
     const positions = buildPage.mode === 'aram' ? [] : ['TOP', 'JUNGLE', 'MID', 'ADC', 'SUPPORT'];
-    const controls = `<div class="build-controls"><select id="build-hero" aria-label="选择英雄">${heroOptions(buildPage.championId)}</select><div class="tabs" role="tablist" aria-label="分路">${positions.map(position => `<button type="button" class="tab${buildPage.position === position ? ' active' : ''}" data-action="build-position" data-position="${position}" role="tab" aria-selected="${buildPage.position === position}">${positionNames[position]}</button>`).join('')}<button type="button" class="tab${buildPage.mode === 'aram' ? ' active' : ''}" data-action="build-position" data-position="none" role="tab" aria-selected="${buildPage.mode === 'aram'}">大乱斗</button></div><div class="build-filters"><select id="opgg-region" aria-label="数据区域">${regionOptions.map(([key, label]) => `<option value="${key}"${settings.opggRegion === key ? ' selected' : ''}>${label}</option>`).join('')}</select><select id="opgg-tier" aria-label="段位范围">${tierOptions.map(([key, label]) => `<option value="${key}"${settings.opggTier === key ? ' selected' : ''}>${label}</option>`).join('')}</select></div></div>`;
+    const controls = `<div class="build-controls"><select id="build-hero" aria-label="选择英雄">${heroOptions(buildPage.championId)}</select><div class="tabs" role="tablist" aria-label="分路">${positions.map(position => `<button type="button" class="tab${buildPage.position === position ? ' active' : ''}" data-action="build-position" data-position="${position}" role="tab" aria-selected="${buildPage.position === position}">${positionNames[position]}</button>`).join('')}<button type="button" class="tab${buildPage.mode === 'aram' && !buildPage.mayhem ? ' active' : ''}" data-action="build-position" data-position="none" role="tab" aria-selected="${buildPage.mode === 'aram' && !buildPage.mayhem}">大乱斗</button><button type="button" class="tab${buildPage.mayhem ? ' active' : ''}" data-action="build-position" data-position="mayhem" role="tab" aria-selected="${buildPage.mayhem}">海克斯大乱斗</button></div><div class="build-filters"><select id="opgg-region" aria-label="数据区域">${regionOptions.map(([key, label]) => `<option value="${key}"${settings.opggRegion === key ? ' selected' : ''}>${label}</option>`).join('')}</select><select id="opgg-tier" aria-label="段位范围">${tierOptions.map(([key, label]) => `<option value="${key}"${settings.opggTier === key ? ' selected' : ''}>${label}</option>`).join('')}</select></div></div>`;
     let body;
     if (!settings.onlineData) body = `<section class="panel">${empty('在线数据已关闭', '在工具箱中开启后可查看推荐出装')}</section>`;
     else if (!buildPage.championId) body = `<section class="panel">${empty('选择一个英雄', '')}</section>`;
     else if (buildPage.loading) body = '<section class="panel"><div class="loading-state"><span class="spinner" aria-hidden="true"></span>正在读取 OP.GG 数据…</div></section>';
     else if (buildPage.error) body = `<div class="notice warning"><strong>未能获取数据</strong><p>${esc(buildPage.error)}</p></div>`;
     else body = buildPage.build ? `<section class="panel build-panel">${buildHtml(buildPage.build, 'page')}</section>` : '';
+    if (settings.onlineData && buildPage.championId && buildPage.mayhem) body = `<section class="panel">${augmentsHtml(buildPage.augments, buildPage.augmentsError, !buildPage.augments && !buildPage.augmentsError)}<p class="mayhem-note">符文与出装为普通大乱斗数据</p></section>` + body;
     return heading('英雄推荐', '', '') + controls + body;
   }
   async function loadBuild() {
     if (!buildPage.championId || !settingsValue().onlineData) { renderPage(); return; }
     const request = {...buildPage};
-    buildPage.loading = true; buildPage.error = ''; renderPage();
+    buildPage.loading = true; buildPage.error = ''; buildPage.augments = null; buildPage.augmentsError = ''; renderPage();
+    if (request.mayhem) {
+      invoke('getMayhemAugments', number(request.championId)).then(augments => { if (buildPage.championId === request.championId && buildPage.mayhem) buildPage.augments = augments; })
+        .catch(error => { if (buildPage.championId === request.championId && buildPage.mayhem) buildPage.augmentsError = error.message; })
+        .finally(() => { if (page === 'builds' && !buildPage.loading) renderPage(); });
+    }
     try {
       const build = await invoke('getBuild', number(request.championId), request.mode === 'aram' ? 'none' : request.position, request.mode);
       if (buildPage.championId !== request.championId || buildPage.mode !== request.mode || (request.position && buildPage.position !== request.position)) return;
@@ -631,9 +650,9 @@
       if (page === 'automation') { await getCatalog('heroes'); if (page === 'automation') renderPage(); }
       if (page === 'presets') { await Promise.all(['heroes', 'runes', 'spells', 'items'].map(getCatalog)); if (page === 'presets') renderPage(); }
       if (page === 'builds') {
-        await Promise.all(['heroes', 'runes', 'spells', 'items'].map(getCatalog));
+        await Promise.all(['heroes', 'runes', 'spells', 'items', 'augments'].map(getCatalog));
         const rec = state.recommendation;
-        if (!buildPage.championId && rec && rec.championId) { buildPage.championId = String(rec.championId); buildPage.mode = rec.mode === 'aram' ? 'aram' : 'ranked'; buildPage.position = rec.position === 'none' ? '' : rec.position || ''; }
+        if (!buildPage.championId && rec && rec.championId) { buildPage.championId = String(rec.championId); buildPage.mode = rec.mode === 'aram' ? 'aram' : 'ranked'; buildPage.mayhem = !!rec.mayhem; buildPage.position = rec.position === 'none' ? '' : rec.position || ''; }
         if (page === 'builds') { if (buildPage.championId && !buildPage.build && !buildPage.loading) await loadBuild(); else renderPage(); }
       }
     } catch (error) { toast(error.message, true); }
@@ -742,7 +761,7 @@
       }
       if (action === 'build-position') {
         const position = button.dataset.position;
-        buildPage.mode = position === 'none' ? 'aram' : 'ranked'; buildPage.position = position === 'none' ? '' : position; buildPage.build = null;
+        buildPage.mayhem = position === 'mayhem'; buildPage.mode = position === 'none' || position === 'mayhem' ? 'aram' : 'ranked'; buildPage.position = buildPage.mode === 'aram' ? '' : position; buildPage.build = null;
         await loadBuild(); return;
       }
       if (action === 'build-rune' || action === 'build-spells' || action === 'build-items') {
@@ -914,7 +933,7 @@
       await loadRuneLayout();
       hydrateClientDraft();
       renderPage();
-      await Promise.all(['heroes', 'items', 'runes', 'spells'].map(getCatalog));
+      await Promise.all(['heroes', 'items', 'runes', 'spells', 'augments'].map(getCatalog));
       if (page === 'dashboard') renderPage();
     } catch (error) {
       if (!ready) { loadError = error.message; updateHeader(); renderPage(); }

@@ -91,7 +91,7 @@ function register() {
     applySpells: value => assistant.applySpells(value), applyItemSet: value => assistant.applyItemSet(value),
     createLobby: id => assistant.createLobby(id), setProfile: value => assistant.setProfile(value),
     getClientSettings: () => assistant.getClientSettings(), saveClientSettings: value => assistant.saveClientSettings(value),
-    getBuild: (championId, position, mode) => assistant.getBuild(championId, position, mode), applyBuildItems: value => assistant.applyBuildItems(value),
+    getBuild: (championId, position, mode) => assistant.getBuild(championId, position, mode), getMayhemAugments: championId => assistant.getMayhemAugments(championId), applyBuildItems: value => assistant.applyBuildItems(value),
     syncGameData: () => assistant.syncGameData(), getRuneLayout: () => assistant.getRuneLayout(),
     chooseLockfile: async () => {
       const selected = await dialog.showOpenDialog(window, { title: tr('选择英雄联盟客户端目录内的 lockfile'), properties: ['openFile'], filters: [{ name: tr('客户端 lockfile'), extensions: ['*'] }] });
