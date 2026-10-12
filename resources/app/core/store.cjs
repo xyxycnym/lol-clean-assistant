@@ -11,7 +11,7 @@ const DEFAULTS = {
   autoStart: false, startDelaySec: 8, autoAgain: false, againDelaySec: 8,
   autoPick: false, autoBan: false, pickHoverOnly: true,
   pickAtLastSecond: false, banAtLastSecond: false, avoidTeamHover: true,
-  onlineData: true, opggRegion: 'global', opggTier: 'emerald_plus',
+  onlineData: true, opggRegion: 'global', opggTier: 'emerald_plus', language: '',
   picks: Object.fromEntries(ROLES.map(role => [role, []])),
   bans: Object.fromEntries(ROLES.map(role => [role, []])), runePresets: [], itemSets: [], clientProfiles: { game: null, input: null }
 };
@@ -49,6 +49,7 @@ function normalizeSettings(value, current = DEFAULTS) {
   const next = clone(current);
   for (const key of BOOLS) if (key in value) { if (typeof value[key] !== 'boolean') throw new Error('开关设置格式错误'); next[key] = value[key]; }
   for (const key of ['acceptDelaySec', 'startDelaySec', 'againDelaySec']) if (key in value) next[key] = integer(value[key], 0, 30, next[key]);
+  if ('language' in value) { if (!['', 'zh-CN', 'en', 'ko'].includes(value.language)) throw new Error('无效的语言'); next.language = value.language; }
   if ('opggRegion' in value) { if (!REGIONS.includes(value.opggRegion)) throw new Error('无效的数据区域'); next.opggRegion = value.opggRegion; }
   if ('opggTier' in value) { if (!TIERS.includes(value.opggTier)) throw new Error('无效的段位范围'); next.opggTier = value.opggTier; }
   for (const kind of ['picks', 'bans']) if (kind in value) {

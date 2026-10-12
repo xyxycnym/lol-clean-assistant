@@ -2,6 +2,63 @@
 
 (() => {
   const api = window.cleanAssistant;
+  const I18N = window.I18N;
+  let lang = 'zh-CN';
+  const t = text => I18N ? I18N.translate(text, lang) : text;
+  // Same Chinese word, different meaning by context (e.g. a column header vs. a category tab).
+  const tc = (text, context) => I18N ? I18N.translate(text, lang, 0, context) : text;
+  const locale = () => I18N ? I18N.INTL[lang] || 'zh-CN' : 'zh-CN';
+  // The markup is written in Chinese (the source language). Text and labels are translated as they enter the page,
+  // and the Chinese original is remembered so switching language can re-translate already-rendered parts.
+  const LABELS = ['placeholder', 'title', 'aria-label'];
+  const originalText = new WeakMap();
+  const originalLabels = new WeakMap();
+  function localizeText(node) {
+    const value = node.nodeValue;
+    if (!I18N || !I18N.CJK.test(value)) return;
+    originalText.set(node, value);
+    const out = t(value); if (out !== value) node.nodeValue = out;
+  }
+  function localizeLabels(element) {
+    for (const name of LABELS) {
+      const value = element.getAttribute(name);
+      if (value == null || !I18N || !I18N.CJK.test(value)) continue;
+      const saved = originalLabels.get(element) || {}; saved[name] = value; originalLabels.set(element, saved);
+      const out = t(value); if (out !== value) element.setAttribute(name, out);
+    }
+  }
+  function localizeTree(root) {
+    if (lang === 'zh-CN') return;
+    if (root.nodeType === Node.TEXT_NODE) { localizeText(root); return; }
+    if (root.nodeType !== Node.ELEMENT_NODE) return;
+    localizeLabels(root); root.querySelectorAll('[placeholder], [title], [aria-label]').forEach(localizeLabels);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) localizeText(walker.currentNode);
+  }
+  function restoreTree(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) { const original = originalText.get(walker.currentNode); if (original != null) walker.currentNode.nodeValue = original; }
+    root.querySelectorAll('[placeholder], [title], [aria-label]').forEach(element => { const saved = originalLabels.get(element); if (saved) for (const [name, value] of Object.entries(saved)) element.setAttribute(name, value); });
+  }
+  new MutationObserver(records => {
+    if (lang === 'zh-CN') return;
+    for (const record of records) {
+      if (record.type === 'characterData') localizeText(record.target);
+      else if (record.type === 'attributes') localizeLabels(record.target);
+      else record.addedNodes.forEach(localizeTree);
+    }
+  }).observe(document.documentElement, {subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: LABELS});
+  function setLanguage(next) {
+    if (!I18N || next === lang) return false;
+    restoreTree(document.body);
+    lang = next;
+    document.documentElement.lang = next;
+    document.title = t('英雄联盟 · 本地助手');
+    const picker = document.getElementById('language-select'); if (picker) picker.value = next;
+    localizeTree(document.body);
+    return true;
+  }
+  function chosenLanguage(value) { const settings = value && value.settings || {}; return settings.language || value && value.systemLanguage || 'zh-CN'; }
   const content = document.getElementById('content');
   const dialog = document.getElementById('detail-dialog');
   const catalogKinds = [
@@ -71,7 +128,7 @@
   function esc(value) { return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[char])); }
   function plain(value) { return String(value == null ? '' : value).replace(/<br\s*\/?\s*>/gi, '\n').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim(); }
   function number(value, fallback = 0) { const result = Number(value); return Number.isFinite(result) ? result : fallback; }
-  function formatNumber(value) { return Math.round(number(value)).toLocaleString('zh-CN'); }
+  function formatNumber(value) { return Math.round(number(value)).toLocaleString(locale()); }
   function checked(value) { return value ? ' checked' : ''; }
   function connected() { return !!state.connection.connected; }
   function disabledClient() { return ` data-requires-client="true"${connected() ? '' : ' disabled title="连接游戏客户端后可使用"'}`; }
@@ -101,15 +158,15 @@
     const queues = Array.isArray(info.queues) ? info.queues : info.queues && typeof info.queues === 'object' ? Object.entries(info.queues).map(([queueType, item]) => ({...item, queueType})) : [];
     const rank = info.rankedSolo5x5 || info.RANKED_SOLO_5x5 || queues.find(entry => entry.queueType === 'RANKED_SOLO_5x5') || (info.tier ? info : null);
     if (!rank || !rank.tier || rank.tier === 'NONE') return '单双排未定级';
-    return `${tierNames[rank.tier] || rank.tier}${rank.division || rank.rank ? ` ${rank.division || rank.rank}` : ''}${rank.leaguePoints != null ? ` · ${rank.leaguePoints} LP` : ''}`;
+    return `${t(tierNames[rank.tier] || rank.tier)}${rank.division || rank.rank ? ` ${rank.division || rank.rank}` : ''}${rank.leaguePoints != null ? ` · ${rank.leaguePoints} LP` : ''}`;
   }
-  function queueName(id) { return queueNames[id] || (id ? `游戏队列 ${id}` : '未知模式'); }
+  function queueName(id) { return t(queueNames[id] || (id ? `游戏队列 ${id}` : '未知模式')); }
   function duration(value) { const seconds = Math.max(0, Math.floor(number(value))); return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`; }
   function dateText(value, short = false) {
     if (!value) return '';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '';
-    return date.toLocaleString('zh-CN', short ? {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false} : {year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false});
+    return date.toLocaleString(locale(), short ? {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false} : {year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false});
   }
   function settingsValue() { return Object.assign(clone(defaults), state.settings || {}); }
   function hydrateClientDraft() {
@@ -157,6 +214,7 @@
     state.connection = Object.assign({connected: false, message: '', phase: ''}, next.connection);
     state.teams = next.teams || {myTeam: [], enemyTeam: []};
     state.settings = next.settings || state.settings;
+    if (setLanguage(chosenLanguage(state)) && ready) reloadGameData();
     const version = state.gameData && state.gameData.version || '';
     if (dataVersion && version && version !== dataVersion) reloadGameData();
     dataVersion = version || dataVersion;
@@ -238,7 +296,7 @@
     const own = state.me && player.puuid && player.puuid === state.me.puuid;
     const scores = player.scores;
     const currentKda = scores ? `${number(scores.kills)} / ${number(scores.deaths)} / ${number(scores.assists)}` : null;
-    return `<article class="lane-player${own ? ' my-player' : ''}" ${semantic}>${artTag(player.championId, 'lane-art')}<div class="player-identity">${imageTag(heroImage(player.championId))}<div class="identity-text"><button type="button" class="text-button player-name" data-action="player-detail" data-team="${team}" data-index="${index}" title="${esc(playerName(player))}">${esc(playerName(player))}</button><div class="player-meta">${esc(heroName(player.championId))}${own ? ' · 自己' : ''}</div></div></div><div class="player-rank" title="${esc(rankText(player.rankedInfo))}">${esc(rankText(player.rankedInfo))}</div><div class="lane-metrics"><div><strong class="metric num${aggregate.rate != null && aggregate.rate >= 60 ? ' positive' : ''}">${aggregate.rate != null ? `${aggregate.rate}%` : '—'}</strong><span class="metric-note">${aggregate.count ? `${aggregate.wins}胜 ${aggregate.losses}负` : '近期胜率'}</span></div><div><strong class="metric num${kdaClass(aggregate.kda)}">${aggregate.kda != null ? aggregate.kda.toFixed(2) : '—'}</strong><span class="metric-note">近期 KDA</span></div></div><progress class="rate-bar${aggregate.rate == null ? ' unknown' : ''}" max="100" value="${aggregate.rate != null ? aggregate.rate : 0}" aria-label="近期胜率"></progress>${aggregate.records.length ? `<table class="recent-table"><thead><tr><th>英雄</th><th>结果</th><th>K / D / A</th></tr></thead><tbody>${aggregate.records.slice(0,5).map(match=>`<tr><td>${imageTag(heroImage(match.championId),'','')}</td><td><span class="mini-result${match.knownResult ? match.win ? ' win' : ' loss' : ''}">${match.knownResult ? match.win ? '胜' : '负' : '—'}</span></td><td>${number(match.kills)} / ${number(match.deaths)} / ${number(match.assists)}</td></tr>`).join('')}${Array.from({length:Math.max(0,5-aggregate.records.length)},()=>'<tr><td></td><td></td><td class="muted">—</td></tr>').join('')}</tbody></table>` : `<div class="lane-empty-history">${currentKda ? `本局 ${esc(currentKda)}` : player.puuid || player.summonerId ? '近期记录尚未返回' : '身份未公开，无法查询'}</div>`}<div class="lane-footer"><span class="num">${aggregate.cs != null ? `场均补刀 ${Math.round(aggregate.cs)}` : '仅显示公开数据'}</span>${player.puuid ? `<button type="button" class="link-button" data-action="player-history" data-puuid="${esc(player.puuid)}" data-name="${esc(playerName(player))}">战绩</button>` : ''}</div></article>`;
+    return `<article class="lane-player${own ? ' my-player' : ''}" ${semantic}>${artTag(player.championId, 'lane-art')}<div class="player-identity">${imageTag(heroImage(player.championId))}<div class="identity-text"><button type="button" class="text-button player-name" data-action="player-detail" data-team="${team}" data-index="${index}" title="${esc(playerName(player))}">${esc(playerName(player))}</button><div class="player-meta">${esc(heroName(player.championId))}${own ? ' · 自己' : ''}</div></div></div><div class="player-rank" title="${esc(rankText(player.rankedInfo))}">${esc(rankText(player.rankedInfo))}</div><div class="lane-metrics"><div><strong class="metric num${aggregate.rate != null && aggregate.rate >= 60 ? ' positive' : ''}">${aggregate.rate != null ? `${aggregate.rate}%` : '—'}</strong><span class="metric-note">${aggregate.count ? `${aggregate.wins}胜 ${aggregate.losses}负` : '近期胜率'}</span></div><div><strong class="metric num${kdaClass(aggregate.kda)}">${aggregate.kda != null ? aggregate.kda.toFixed(2) : '—'}</strong><span class="metric-note">近期 KDA</span></div></div><progress class="rate-bar${aggregate.rate == null ? ' unknown' : ''}" max="100" value="${aggregate.rate != null ? aggregate.rate : 0}" aria-label="近期胜率"></progress>${aggregate.records.length ? `<table class="recent-table"><thead><tr><th></th><th></th><th>K / D / A</th></tr></thead><tbody>${aggregate.records.slice(0,5).map(match=>`<tr><td>${imageTag(heroImage(match.championId),'','')}</td><td><span class="mini-result${match.knownResult ? match.win ? ' win' : ' loss' : ''}">${match.knownResult ? match.win ? '胜' : '负' : '—'}</span></td><td>${number(match.kills)} / ${number(match.deaths)} / ${number(match.assists)}</td></tr>`).join('')}${Array.from({length:Math.max(0,5-aggregate.records.length)},()=>'<tr><td></td><td></td><td class="muted">—</td></tr>').join('')}</tbody></table>` : `<div class="lane-empty-history">${currentKda ? `本局 ${esc(currentKda)}` : player.puuid || player.summonerId ? '近期记录尚未返回' : '身份未公开，无法查询'}</div>`}<div class="lane-footer"><span class="num">${aggregate.cs != null ? `场均补刀 ${Math.round(aggregate.cs)}` : '仅显示公开数据'}</span>${player.puuid ? `<button type="button" class="link-button" data-action="player-history" data-puuid="${esc(player.puuid)}" data-name="${esc(playerName(player))}">战绩</button>` : ''}</div></article>`;
   }
   function boardTeamHtml(players, name, team) {
     if ([450,900,1020,1090,1100,1130,1160,1700,1710,1900,2400].includes(number(state.queueId))) {
@@ -286,11 +344,11 @@
   }
   function matchRow(game, playerPuuid) {
     const match=normalMatch(game, typeof playerPuuid==='string'?playerPuuid:history.summoner&&history.summoner.puuid);
-    return `<tr class="${match.knownResult?match.win?'row-win':'row-loss':''}"><td class="history-date num">${esc(dateText(match.date,true)||'日期未提供')}</td><td>${esc(queueName(match.queueId))}</td><td><div class="identity-cell">${imageTag(heroImage(match.championId))}<span>${esc(heroName(match.championId))}</span></div></td><td><span class="outcome-tag ${match.knownResult?match.win?'win':'loss':''}">${match.knownResult?match.win?'胜利':'失败':'结束'}</span></td><td class="num"><strong>${number(match.kills)} / ${number(match.deaths)} / ${number(match.assists)}</strong></td><td class="num">${duration(match.duration)}</td><td class="num col-performance">${match.cs!=null?formatNumber(match.cs):'—'}</td><td><button type="button" class="link-button" data-action="match-detail" data-game="${esc(match.id)}">详情</button></td></tr>`;
+    return `<tr><td class="history-date num">${esc(dateText(match.date,true)||'日期未提供')}</td><td>${esc(queueName(match.queueId))}</td><td><div class="identity-cell">${imageTag(heroImage(match.championId))}<span>${esc(heroName(match.championId))}</span></div></td><td><span class="outcome-tag ${match.knownResult?match.win?'win':'loss':''}">${match.knownResult?match.win?'胜利':'失败':'结束'}</span></td><td class="num"><strong>${number(match.kills)} / ${number(match.deaths)} / ${number(match.assists)}</strong></td><td class="num">${duration(match.duration)}</td><td class="num col-performance">${match.cs!=null?formatNumber(match.cs):'—'}</td><td><button type="button" class="link-button" data-action="match-detail" data-game="${esc(match.id)}">详情</button></td></tr>`;
   }
   function historyResultsHtml() {
     const list=filteredHistory();
-    return list.length?`<div class="table-wrap"><table class="data-table history-table"><thead><tr><th>日期</th><th>模式</th><th>英雄</th><th>结果</th><th>K / D / A</th><th>时长</th><th class="col-performance">补刀</th><th>操作</th></tr></thead><tbody>${list.map(matchRow).join('')}</tbody></table></div>`:empty('没有符合筛选的记录','调整胜负、模式或英雄筛选后再试。');
+    return list.length?`<div class="table-wrap"><table class="data-table history-table"><thead><tr><th>日期</th><th>模式</th><th>${tc('英雄', 'column')}</th><th>结果</th><th>K / D / A</th><th>时长</th><th class="col-performance">补刀</th><th>操作</th></tr></thead><tbody>${list.map(matchRow).join('')}</tbody></table></div>`:empty('没有符合筛选的记录','调整胜负、模式或英雄筛选后再试。');
   }
   function historyHtml() {
     const results=history.games.map(game=>normalMatch(game,history.summoner&&history.summoner.puuid));
@@ -319,7 +377,7 @@
   function heroOptions(selected, withUniversal = false, withEmptyBan = false) {
     let html = withUniversal ? `<option value="0"${selected == 0 ? ' selected' : ''}>通用方案</option>` : '<option value="">选择英雄…</option>';
     if (withEmptyBan) html += '<option value="-1">空禁用</option>';
-    return html + (catalogs.get('heroes') || []).filter(hero => number(catalogId(hero)) < 60000 && number(catalogId(hero)) > 0).sort((a, b) => itemName(a).localeCompare(itemName(b), 'zh-CN')).map(hero => `<option value="${esc(catalogId(hero))}"${String(catalogId(hero)) === String(selected) ? ' selected' : ''}>${esc(itemName(hero))}${hero.alias ? ` · ${esc(hero.alias)}` : ''}</option>`).join('');
+    return html + (catalogs.get('heroes') || []).filter(hero => number(catalogId(hero)) < 60000 && number(catalogId(hero)) > 0).sort((a, b) => itemName(a).localeCompare(itemName(b), locale())).map(hero => `<option value="${esc(catalogId(hero))}"${String(catalogId(hero)) === String(selected) ? ' selected' : ''}>${esc(itemName(hero))}${hero.alias && hero.alias !== itemName(hero) ? ` · ${esc(hero.alias)}` : ''}</option>`).join('');
   }
   function priorityBox(type, role, label) {
     const ids=(autoDraft[type]&&autoDraft[type][role])||[];
@@ -368,7 +426,10 @@
   }
   function catalogDetail(id) {catalogSelectedId=String(id);updateCatalogResults();}
   function pct(value, digits = 1) { return value == null ? '—' : `${(value * 100).toFixed(digits)}%`; }
-  function games(value) { return value >= 10000 ? `${(value / 10000).toFixed(1)}万场` : `${formatNumber(value)} 场`; }
+  function games(value) {
+    const count = new Intl.NumberFormat(locale(), value >= 10000 ? {notation: 'compact', maximumFractionDigits: 1} : {}).format(Math.round(number(value)));
+    return lang === 'en' ? `${count} games` : lang === 'ko' ? `${count}게임` : `${count}场`;
+  }
   function iconOf(kind, id) { const item = findCatalog(kind, id); return imageTag(item && item.image, item ? itemName(item) : String(id), 'build-icon'); }
   function iconRow(kind, ids, separator = '') { return `<div class="icon-row">${ids.map(id => `<span class="icon-cell" title="${esc(itemName(findCatalog(kind, id) || {id}))}">${iconOf(kind, id)}</span>`).join(separator)}</div>`; }
   function statLine(entry) { return `<span class="build-stat"><b class="num">${pct(entry.winRate)}</b> 胜率<i>·</i><span class="num">${pct(entry.pickRate, 0)}</span> 选取<i>·</i>${games(entry.play)}</span>`; }
@@ -466,7 +527,7 @@
   function options(values, selected, label) { return values.map(value => `<option value="${esc(value)}"${String(value) === String(selected) ? ' selected' : ''}>${esc(label(value))}</option>`).join(''); }
   function spellOptions(selected) {
     const list = (catalogs.get('spells') || []).filter(item => spellNames[catalogId(item)] && number(catalogId(item)) < 54);
-    return options(list.map(catalogId), selected, id => spellNames[id] || itemName(findCatalog('spells', id) || {id}));
+    return options(list.map(catalogId), selected, id => { const spell = findCatalog('spells', id); return spell ? itemName(spell) : spellNames[id]; });
   }
   function runeSlot(index, values, title) { return `<div class="rune-slot"><label for="perk-${index}">${esc(title)}</label><select id="perk-${index}" name="perk${index}" required>${options(availableRunes(values), runeDraft.selectedPerkIds[index], runeLabel)}</select></div>`; }
   function presetCardsHtml() {
@@ -482,7 +543,7 @@
     const firstRow = secondary.findIndex(group => group.includes(number(runeDraft.selectedPerkIds[4])));
     const secondRow = secondary.findIndex(group => group.includes(number(runeDraft.selectedPerkIds[5])));
     const secondaryOptions = (selected, excluded) => secondary.slice(1).map((group, index) => availableRunes(group).map(id => `<option value="${id}"${id == selected ? ' selected' : ''}${index + 1 === excluded ? ' disabled' : ''}>${index + 1} 行 · ${esc(runeLabel(id))}</option>`).join('')).join('');
-    return `<form id="rune-form"><div class="section-form"><div class="field"><label for="rune-name">方案名称</label><input id="rune-name" name="name" maxlength="60" value="${esc(runeDraft.name)}" placeholder="例如：安妮中路" required></div><div class="field"><label for="rune-champion">关联英雄</label><select id="rune-champion" name="championId">${heroOptions(runeDraft.championId, true)}</select></div></div><div class="rune-editor"><div class="rune-column"><h3>主系</h3><select name="primaryStyleId" aria-label="主系符文">${options(paths.map(([id]) => id), runeDraft.primaryStyleId, id => paths.find(item => item[0] === id)[1])}</select>${primary.map((group, index) => runeSlot(index, group, ['基石', '第一行', '第二行', '第三行'][index])).join('')}</div><div class="rune-column"><h3>副系</h3><select name="subStyleId" aria-label="副系符文">${options(paths.filter(([id]) => id !== number(runeDraft.primaryStyleId)).map(([id]) => id), runeDraft.subStyleId, id => paths.find(item => item[0] === id)[1])}</select><div class="rune-slot"><label for="perk-4">第一枚副系符文</label><select id="perk-4" name="perk4">${secondaryOptions(runeDraft.selectedPerkIds[4], secondRow)}</select></div><div class="rune-slot"><label for="perk-5">第二枚副系符文</label><select id="perk-5" name="perk5">${secondaryOptions(runeDraft.selectedPerkIds[5], firstRow)}</select></div></div></div><div class="shard-row">${runeSlot(6, shardGroups[0], '进攻碎片')}${runeSlot(7, shardGroups[1], '灵活碎片')}${runeSlot(8, shardGroups[2], '防御碎片')}</div><div class="spell-fields"><div class="field"><label for="spell-one">D 键技能</label><select id="spell-one" name="spell1Id">${spellOptions(runeDraft.spell1Id)}</select></div><div class="field"><label for="spell-two">F 键技能</label><select id="spell-two" name="spell2Id">${spellOptions(runeDraft.spell2Id)}</select></div></div><div class="preset-footer"><button type="button" class="button ghost" data-action="preset-new">新建方案</button><button type="submit" class="button">保存方案</button></div></form>`;
+    return `<form id="rune-form"><div class="section-form"><div class="field"><label for="rune-name">方案名称</label><input id="rune-name" name="name" maxlength="60" value="${esc(runeDraft.name)}" placeholder="例如：安妮中路" required></div><div class="field"><label for="rune-champion">关联英雄</label><select id="rune-champion" name="championId">${heroOptions(runeDraft.championId, true)}</select></div></div><div class="rune-editor"><div class="rune-column"><h3>主系</h3><select name="primaryStyleId" aria-label="主系符文">${options(paths.map(([id]) => id), runeDraft.primaryStyleId, id => findCatalog('runes', id) ? runeLabel(id) : paths.find(item => item[0] === id)[1])}</select>${primary.map((group, index) => runeSlot(index, group, ['基石', '第一行', '第二行', '第三行'][index])).join('')}</div><div class="rune-column"><h3>副系</h3><select name="subStyleId" aria-label="副系符文">${options(paths.filter(([id]) => id !== number(runeDraft.primaryStyleId)).map(([id]) => id), runeDraft.subStyleId, id => findCatalog('runes', id) ? runeLabel(id) : paths.find(item => item[0] === id)[1])}</select><div class="rune-slot"><label for="perk-4">第一枚副系符文</label><select id="perk-4" name="perk4">${secondaryOptions(runeDraft.selectedPerkIds[4], secondRow)}</select></div><div class="rune-slot"><label for="perk-5">第二枚副系符文</label><select id="perk-5" name="perk5">${secondaryOptions(runeDraft.selectedPerkIds[5], firstRow)}</select></div></div></div><div class="shard-row">${runeSlot(6, shardGroups[0], '进攻碎片')}${runeSlot(7, shardGroups[1], '灵活碎片')}${runeSlot(8, shardGroups[2], '防御碎片')}</div><div class="spell-fields"><div class="field"><label for="spell-one">D 键技能</label><select id="spell-one" name="spell1Id">${spellOptions(runeDraft.spell1Id)}</select></div><div class="field"><label for="spell-two">F 键技能</label><select id="spell-two" name="spell2Id">${spellOptions(runeDraft.spell2Id)}</select></div></div><div class="preset-footer"><button type="button" class="button ghost" data-action="preset-new">新建方案</button><button type="submit" class="button">保存方案</button></div></form>`;
   }
   function itemPickerHtml() {
     const query = itemQuery.trim().toLowerCase();
@@ -677,7 +738,7 @@
       if (action === 'player-detail') {
         const player=(state.teams[button.dataset.team]||[])[number(button.dataset.index)];if(!player)return;
         const aggregate=playerAggregate(player),role=boardRoles.find(([key])=>key===normalizedRole(player));
-        showDialog(playerName(player),`<div class="catalog-info">${imageTag(heroImage(player.championId),'','')}<div><h2>${esc(heroName(player.championId))}</h2><p>${esc(role?role[1]:'位置未公开')} · ${esc(rankText(player.rankedInfo))}</p></div></div><div class="player-detail-summary"><div><small>近期胜率</small><strong class="num">${aggregate.rate!=null?`${aggregate.rate}%`:'—'}</strong></div><div><small>近期 KDA</small><strong class="num">${aggregate.kda!=null?aggregate.kda.toFixed(2):'—'}</strong></div><div><small>场均补刀</small><strong class="num">${aggregate.cs!=null?Math.round(aggregate.cs):'—'}</strong></div><div><small>场均伤害</small><strong class="num">${aggregate.damage!=null?formatNumber(aggregate.damage):'—'}</strong></div></div>${aggregate.records.length?`<div class="table-wrap"><table class="data-table history-table"><thead><tr><th>日期</th><th>模式</th><th>英雄</th><th>结果</th><th>K / D / A</th><th>时长</th><th class="col-performance">补刀</th><th>操作</th></tr></thead><tbody>${(player.matchHistory||[]).slice(0,10).map(game=>matchRow(game,player.puuid)).join('')}</tbody></table></div>`:empty('暂无公开的近期战绩','客户端尚未返回记录，或玩家身份未公开。')}`);return;
+        showDialog(playerName(player),`<div class="catalog-info">${imageTag(heroImage(player.championId),'','')}<div><h2>${esc(heroName(player.championId))}</h2><p>${esc(role?role[1]:'位置未公开')} · ${esc(rankText(player.rankedInfo))}</p></div></div><div class="player-detail-summary"><div><small>近期胜率</small><strong class="num">${aggregate.rate!=null?`${aggregate.rate}%`:'—'}</strong></div><div><small>近期 KDA</small><strong class="num">${aggregate.kda!=null?aggregate.kda.toFixed(2):'—'}</strong></div><div><small>场均补刀</small><strong class="num">${aggregate.cs!=null?Math.round(aggregate.cs):'—'}</strong></div><div><small>场均伤害</small><strong class="num">${aggregate.damage!=null?formatNumber(aggregate.damage):'—'}</strong></div></div>${aggregate.records.length?`<div class="table-wrap"><table class="data-table history-table"><thead><tr><th>日期</th><th>模式</th><th>${tc('英雄', 'column')}</th><th>结果</th><th>K / D / A</th><th>时长</th><th class="col-performance">补刀</th><th>操作</th></tr></thead><tbody>${(player.matchHistory||[]).slice(0,10).map(game=>matchRow(game,player.puuid)).join('')}</tbody></table></div>`:empty('暂无公开的近期战绩','客户端尚未返回记录，或玩家身份未公开。')}`);return;
       }
       if (action === 'build-position') {
         const position = button.dataset.position;
@@ -686,7 +747,7 @@
       }
       if (action === 'build-rune' || action === 'build-spells' || action === 'build-items') {
         const build = buildFor(button.dataset.source); if (!build) throw new Error('推荐数据已更新，请重试。');
-        const name = `OP.GG ${heroName(build.championId)}${build.position !== 'none' ? ` ${positionNames[build.position] || ''}` : ' 大乱斗'}`;
+        const name = `OP.GG ${heroName(build.championId)} ${t(build.position !== 'none' ? positionNames[build.position] || '' : '大乱斗')}`.trim();
         if (action === 'build-rune') {
           const runePage = build.runes[number(button.dataset.index)]; if (!runePage) throw new Error('未找到这套符文。');
           await invoke('applyRune', {name, championId: build.championId, primaryStyleId: runePage.primaryStyleId, subStyleId: runePage.subStyleId, selectedPerkIds: runePage.selectedPerkIds});
@@ -695,7 +756,7 @@
           const entry = build.spells[number(button.dataset.index)]; if (!entry || entry.ids.length !== 2) throw new Error('未找到这组召唤师技能。');
           await invoke('applySpells', {spell1Id: entry.ids[0], spell2Id: entry.ids[1]}); toast('召唤师技能已应用');
         } else {
-          await invoke('applyBuildItems', {championId: build.championId, title: name, blocks: itemBlocks(build).map(([type, entry]) => ({type, items: entry.ids}))});
+          await invoke('applyBuildItems', {championId: build.championId, title: name, blocks: itemBlocks(build).map(([type, entry]) => ({type: t(type), items: entry.ids}))});
           toast('出装已导入客户端商店');
         }
         return;
@@ -782,6 +843,10 @@
     if(event.target.id==='priority-type'||event.target.id==='priority-role'){captureAuto();if(event.target.id==='priority-type')autoType=event.target.value;else autoRole=event.target.value;renderPage();return;}
     if(event.target.dataset.historyFilter){historyFilters[event.target.dataset.historyFilter]=event.target.value;const results=document.getElementById('history-results');if(results)results.innerHTML=historyResultsHtml();return;}
     if (event.target.id === 'client-kind') { clientKind = event.target.value; renderPage(); return; }
+    if (event.target.id === 'language-select') {
+      try { await persistSettings(Object.assign({}, settingsValue(), {language: event.target.value})); } catch (error) { toast(error.message, true); event.target.value = lang; }
+      return;
+    }
     if (event.target.id === 'build-hero') { buildPage.championId = event.target.value; buildPage.build = null; if (buildPage.mode !== 'aram') buildPage.position = ''; await loadBuild(); return; }
     if (event.target.id === 'opgg-region' || event.target.id === 'opgg-tier' || event.target.id === 'online-data') {
       const key = event.target.id === 'opgg-region' ? 'opggRegion' : event.target.id === 'opgg-tier' ? 'opggTier' : 'onlineData';
@@ -845,6 +910,7 @@
     try {
       if (api && typeof api.onState === 'function') unsubscribe = api.onState(ingest);
       await reloadState();
+      setLanguage(chosenLanguage(state));
       await loadRuneLayout();
       hydrateClientDraft();
       renderPage();

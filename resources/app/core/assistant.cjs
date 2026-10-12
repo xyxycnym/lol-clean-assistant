@@ -7,6 +7,7 @@ const { LocalStore, normalizeRune, normalizeItemSet, safeDocument, clone } = req
 const { GameData } = require('./gamedata.cjs');
 const { OpggClient, ROLE_TO_POSITION } = require('./opgg.cjs');
 const { predict, assignPositions } = require('./predict.cjs');
+const { translate } = require('../renderer/i18n.js');
 
 const ARAM_QUEUES = [450, 2400];
 const RIFT_QUEUES = [0, 400, 420, 430, 440, 480, 490, 830, 840, 850];
@@ -46,22 +47,26 @@ class Assistant extends EventEmitter {
     super(); this.assets = options.assets; this.store = new LocalStore(options.dataDirectory);
     this.lcu = options.lcu || new LcuClient({ lockfile: this.store.lockfile }); this.liveReader = options.liveReader || liveRequest;
     this.gameData = options.gameData || new GameData({ assets: this.assets, dataDirectory: options.dataDirectory }); this.opgg = options.opgg || new OpggClient();
-    this.syncAttempt = 0; this.analysisKey = ''; this.predictionKey = '';
+    this.syncAttempt = 0; this.analysisKey = ''; this.predictionKey = ''; this.systemLanguage = options.systemLanguage || 'zh-CN';
     this.catalogs = new Map(); this.cache = new Map(); this.running = false; this.stopped = false; this.settingsRevision = 0; this.pollPromise = null; this.phaseSince = Date.now(); this.actionsDone = new Set(); this.lastLive = 0;
-    this.state = { connection: { connected: false, phase: 'None', message: '请先打开并登录英雄联盟客户端' }, queueId: null, me: null, teams: { myTeam: [], enemyTeam: [] }, live: null, settings: clone(this.store.settings), actions: [], catalogCounts: {}, gameData: this.gameData.info(), recommendation: null, prediction: null };
+    this.state = { connection: { connected: false, phase: 'None', message: '请先打开并登录英雄联盟客户端' }, queueId: null, me: null, teams: { myTeam: [], enemyTeam: [] }, live: null, settings: clone(this.store.settings), actions: [], catalogCounts: {}, gameData: null, systemLanguage: this.systemLanguage, recommendation: null, prediction: null };
+    this.state.gameData = this.gameData.info(this.language());
     for (const kind of ['heroes', 'items', 'runes', 'augments', 'chess', 'equip', 'jobs', 'races', 'spells']) { try { this.state.catalogCounts[kind] = this.getCatalog(kind).length; } catch (_) { this.state.catalogCounts[kind] = 0; } }
     if (this.store.message) this.action(this.store.message);
   }
   getCatalog(kind) {
     if (!['heroes', 'items', 'runes', 'augments', 'chess', 'equip', 'jobs', 'races', 'spells'].includes(kind)) throw new Error('无效的资料分类');
-    if (!this.catalogs.has(kind)) {
-      const synced = this.gameData.catalog(kind);
-      if (synced) this.catalogs.set(kind, synced);
-      else { const file = path.join(this.assets, 'json', kind + '.json'); const value = JSON.parse(fs.readFileSync(file, 'utf8')); this.catalogs.set(kind, Array.isArray(value) ? value : []); }
+    const key = this.language() + ':' + kind;
+    if (!this.catalogs.has(key)) {
+      const localized = this.gameData.catalog(kind, this.language());
+      if (localized) this.catalogs.set(key, localized);
+      else { const file = path.join(this.assets, 'json', kind + '.json'); const value = JSON.parse(fs.readFileSync(file, 'utf8')); this.catalogs.set(key, Array.isArray(value) ? value : []); }
     }
-    return this.catalogs.get(kind);
+    return this.catalogs.get(key);
   }
   snapshot() { return clone(this.state); }
+  language() { const chosen = this.state && this.state.settings && this.state.settings.language || (this.store && this.store.settings.language); return chosen || this.systemLanguage; }
+  tr(text) { return translate(text, this.language()); }
   getRuneLayout() { return this.gameData.layout(); }
   syncInBackground(force = false) {
     if (this.gameData.syncing) return this.gameData.syncing;
@@ -69,14 +74,14 @@ class Assistant extends EventEmitter {
     this.syncAttempt = Date.now();
     return this.gameData.sync(this.lcu, force).then(changed => {
       if (changed) {
-        this.catalogs.clear(); this.state.gameData = this.gameData.info();
+        this.catalogs.clear(); this.state.gameData = this.gameData.info(this.language());
         for (const kind of Object.keys(this.state.catalogCounts)) { try { this.state.catalogCounts[kind] = this.getCatalog(kind).length; } catch (_) {} }
         this.action('游戏数据已更新到 ' + this.state.gameData.version); this.emit('state', this.snapshot());
       }
       return changed;
     }).catch(error => { if (force) throw error; this.action('游戏数据同步未完成：' + error.message); return false; });
   }
-  async syncGameData() { await this.syncInBackground(true); return this.gameData.info(); }
+  async syncGameData() { await this.syncInBackground(true); return this.gameData.info(this.language()); }
   opggOptions(mode) { const settings = this.state.settings; return { region: settings.opggRegion, tier: settings.opggTier, mode }; }
   async mainPosition(championId, mode) {
     if (mode === 'aram') return 'none';
@@ -129,7 +134,12 @@ class Assistant extends EventEmitter {
       .catch(error => { if (this.predictionKey === key) { this.state.prediction = { error: error.message }; this.emit('state', this.snapshot()); } });
   }
   action(message) { this.state.actions.unshift({ at: new Date().toISOString(), message: String(message).slice(0, 240) }); this.state.actions = this.state.actions.slice(0, 30); }
-  saveSettings(value) { this.state.settings = this.store.save(value); this.settingsRevision++; this.emit('state', this.snapshot()); return clone(this.state.settings); }
+  saveSettings(value) {
+    const before = this.language();
+    this.state.settings = this.store.save(value); this.settingsRevision++;
+    if (this.language() !== before) { this.state.gameData = this.gameData.info(this.language()); this.analysisKey = ''; }
+    this.emit('state', this.snapshot()); return clone(this.state.settings);
+  }
   importConfig(value) { this.state.settings = this.store.import(value); this.settingsRevision++; this.emit('state', this.snapshot()); return clone(this.state.settings); }
   chooseLockfile(file) { parseLockfile(file); this.store.setLockfile(file); this.lcu.lockfile = file; this.settingsRevision++; this.lcu.disconnect(); return this.refresh(); }
   async start() { if (this.running) return; this.running = true; this.stopped = false; await this.refresh(); if (!this.running || this.stopped) return; this.timer = setInterval(() => this.refresh().catch(() => {}), 1000); }
@@ -322,7 +332,7 @@ class Assistant extends EventEmitter {
     const existing = await this.lcu.request(endpoint);
     if (!existing || !Array.isArray(existing.itemSets)) throw new Error('客户端出装数据格式不匹配，已保留原配装');
     const uid = 'clean-local-' + preset.id;
-    const itemSet = { uid, title: preset.name, type: 'custom', map: 'any', mode: 'any', associatedChampions: preset.championId ? [preset.championId] : [], associatedMaps: [], blocks: [{ type: '本地配装', items: preset.items.map(id => ({ id: String(id), count: 1 })) }] };
+    const itemSet = { uid, title: preset.name, type: 'custom', map: 'any', mode: 'any', associatedChampions: preset.championId ? [preset.championId] : [], associatedMaps: [], blocks: [{ type: this.tr('本地配装'), items: preset.items.map(id => ({ id: String(id), count: 1 })) }] };
     const sets = existing.itemSets.filter(item => item.uid !== uid); sets.push(itemSet);
     await this.lcu.request(endpoint, 'PUT', { ...existing, itemSets: sets });
     this.action('已应用本地配装：' + preset.name); return { applied: true };

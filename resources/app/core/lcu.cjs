@@ -11,7 +11,7 @@ const READ_PATHS = new Set([
   '/lol-perks/v1/styles', '/lol-perks/v1/perks', '/lol-chat/v1/me',
   '/lol-game-settings/v1/game-settings', '/lol-game-settings/v1/input-settings',
   '/lol-game-queues/v1/queues', '/lol-champ-select/v1/pickable-champion-ids',
-  '/lol-champ-select/v1/bannable-champion-ids', '/lol-champions/v1/owned-champions-minimal', '/lol-patch/v1/game-version'
+  '/lol-champ-select/v1/bannable-champion-ids', '/lol-champions/v1/owned-champions-minimal', '/lol-patch/v1/game-version', '/riotclient/region-locale'
 ]);
 // Read-only game data shipped with the client (champions, items, runes, icons) for the installed patch.
 const GAME_DATA = /^\/lol-game-data\/assets\/(?:v1\/[a-z0-9-]+\.json|v1\/champions\/\d{1,6}\.json|[A-Za-z0-9_./%-]+\.(?:png|jpg|jpeg|webp))$/;

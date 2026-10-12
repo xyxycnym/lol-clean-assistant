@@ -6,6 +6,7 @@ const crypto = require('crypto');
 // Champions, items, runes and summoner spells copied from the running client, so they always match its patch.
 // Icons already shipped with the offline snapshot are reused; only missing ones are copied in as data URIs.
 const KINDS = ['heroes', 'items', 'runes', 'spells'];
+const { normalize } = require('../renderer/i18n.js');
 const IMAGE_LIMIT = 400 * 1024;
 
 function plain(value) { return String(value == null ? '' : value).replace(/<br\s*\/?\s*>/gi, '\n').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/[ \t]+\n/g, '\n').trim(); }
@@ -37,12 +38,19 @@ class GameData {
     this.assets = assets; this.directory = path.join(dataDirectory, 'gamedata'); this.metaFile = path.join(this.directory, 'meta.json');
     this.meta = null; this.syncing = null;
     try { const meta = JSON.parse(fs.readFileSync(this.metaFile, 'utf8')); if (meta && typeof meta.version === 'string' && KINDS.every(kind => fs.existsSync(path.join(this.directory, kind + '.json')))) this.meta = meta; } catch (_) {}
-    try { this.offlineVersion = JSON.parse(fs.readFileSync(path.join(assets, 'manifest.json'), 'utf8')).localDataVersion || ''; } catch (_) { this.offlineVersion = ''; }
+    try { const manifest = JSON.parse(fs.readFileSync(path.join(assets, 'manifest.json'), 'utf8')); this.offlineVersion = manifest.localDataVersion || ''; this.localeVersions = manifest.localeDataVersions || {}; } catch (_) { this.offlineVersion = ''; this.localeVersions = {}; }
   }
-  info() { return this.meta ? { source: 'client', version: this.meta.version, syncedAt: this.meta.syncedAt, offlineVersion: this.offlineVersion } : { source: 'offline', version: this.offlineVersion, syncedAt: null, offlineVersion: this.offlineVersion }; }
+  // Client data is used only when it is in the interface language; otherwise the bundled snapshot for that language.
+  matches(language) { return !!this.meta && (this.meta.locale || 'zh-CN') === language; }
+  offlineVersionFor(language) { return language !== 'zh-CN' && this.localeVersions[language] || this.offlineVersion; }
+  info(language = 'zh-CN') { return this.matches(language) ? { source: 'client', version: this.meta.version, syncedAt: this.meta.syncedAt, offlineVersion: this.offlineVersionFor(language) } : { source: 'offline', version: this.offlineVersionFor(language), syncedAt: null, offlineVersion: this.offlineVersionFor(language) }; }
   layout() { return this.meta && this.meta.runeLayout || null; }
-  catalog(kind) {
-    if (!this.meta || !KINDS.includes(kind)) return null;
+  catalog(kind, language = 'zh-CN') {
+    if (!KINDS.includes(kind) && kind !== 'augments') return null;
+    if (!this.matches(language) || kind === 'augments') {
+      if (language === 'zh-CN') return null;
+      try { const value = JSON.parse(fs.readFileSync(path.join(this.assets, 'json', language, kind + '.json'), 'utf8')); return Array.isArray(value) ? value : null; } catch (_) { return null; }
+    }
     try { const value = JSON.parse(fs.readFileSync(path.join(this.directory, kind + '.json'), 'utf8')); return Array.isArray(value) ? value : null; } catch (_) { return null; }
   }
   offline(kind) { try { return JSON.parse(fs.readFileSync(path.join(this.assets, 'json', kind + '.json'), 'utf8')); } catch (_) { return []; } }
@@ -75,6 +83,8 @@ class GameData {
     const [summary, items, perks, perkstyles, spells] = await Promise.all(['champion-summary.json', 'items.json', 'perks.json', 'perkstyles.json', 'summoner-spells.json'].map(file => lcu.request(base + file)));
     if (![summary, items, perks, spells].every(Array.isArray)) throw new Error('客户端游戏数据格式不匹配');
     const layout = runeLayout(perkstyles);
+    const region = await lcu.request('/riotclient/region-locale').catch(() => null);
+    const locale = normalize(region && region.locale) || (summary.some(item => /[\uac00-\ud7a3]/.test(item.name)) ? 'ko' : summary.some(item => /[\u4e00-\u9fff]/.test(item.name)) ? 'zh-CN' : 'en');
     const offlineHeroes = new Map(this.offline('heroes').map(hero => [Number(hero.id), hero]));
 
     const heroes = [];
@@ -103,7 +113,7 @@ class GameData {
     write(path.join(this.directory, 'items.json'), itemList);
     write(path.join(this.directory, 'runes.json'), runeList);
     write(path.join(this.directory, 'spells.json'), spellList);
-    const meta = { version, fullVersion, syncedAt: new Date().toISOString(), runeLayout: layout, counts: { heroes: heroes.length, items: itemList.length, runes: runeList.length, spells: spellList.length } };
+    const meta = { version, fullVersion, locale, syncedAt: new Date().toISOString(), runeLayout: layout, counts: { heroes: heroes.length, items: itemList.length, runes: runeList.length, spells: spellList.length } };
     write(this.metaFile, meta); this.meta = meta;
     return true;
   }

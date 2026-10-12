@@ -4,6 +4,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { app, BrowserWindow, ipcMain, dialog, Menu, session, screen } = require('electron');
 const { Assistant } = require('./core/assistant.cjs');
+const I18N = require('./renderer/i18n.js');
 
 const portable = path.resolve(__dirname, '..', '..');
 const smoke = process.argv.includes('--smoke-test');
@@ -12,11 +13,15 @@ let dataDirectory = path.join(portable, 'clean-data');
 if (smokeDataArgument) dataDirectory = path.resolve(smokeDataArgument.slice('--smoke-data-dir='.length));
 try { fs.mkdirSync(dataDirectory, { recursive: true }); fs.accessSync(dataDirectory, fs.constants.W_OK); }
 catch (_) { dataDirectory = path.join(app.getPath('appData'), 'LeagueLocalCleanAssistant'); fs.mkdirSync(dataDirectory, { recursive: true }); }
+let window = null; let assistant = null;
+// Interface language: the user's choice, otherwise the system language (Chinese, English or Korean).
+function systemLanguage() { let locale = ''; try { locale = app.isReady() ? app.getLocale() : Intl.DateTimeFormat().resolvedOptions().locale; } catch (_) {} return I18N.normalize(locale) || 'en'; }
+function tr(text) { return I18N.translate(text, assistant ? assistant.language() : systemLanguage()); }
 function smokeTrace(message) { if (smoke) fs.appendFileSync(path.join(dataDirectory, 'main-trace.log'), new Date().toISOString() + ' ' + message + '\n'); }
 smokeTrace('main-loaded');
 process.on('uncaughtException', error => {
   try { fs.writeFileSync(path.join(dataDirectory, 'startup-error.txt'), String(error.stack || error), 'utf8'); } catch (_) {}
-  if (!smoke) dialog.showErrorBox('程序运行未完成', '请查看 clean-data 中的错误记录，重新打开完整的纯净版文件夹。');
+  if (!smoke) dialog.showErrorBox(tr('程序运行未完成'), tr('请查看 clean-data 中的错误记录，重新打开完整的纯净版文件夹。'));
   app.exit(1);
 });
 app.setName('联盟助手纯净版');
@@ -32,7 +37,6 @@ app.commandLine.appendSwitch('disable-features', 'MediaRouter,OptimizationHints,
 app.commandLine.appendSwitch('proxy-server', 'direct://');
 app.commandLine.appendSwitch('host-resolver-rules', 'MAP * ~NOTFOUND, EXCLUDE 127.0.0.1');
 
-let window = null; let assistant = null;
 smokeTrace('waiting-for-ready');
 const rendererFile = path.join(__dirname, 'renderer', 'index.html');
 const rendererUrl = pathToFileURL(rendererFile).href;
@@ -90,17 +94,17 @@ function register() {
     getBuild: (championId, position, mode) => assistant.getBuild(championId, position, mode), applyBuildItems: value => assistant.applyBuildItems(value),
     syncGameData: () => assistant.syncGameData(), getRuneLayout: () => assistant.getRuneLayout(),
     chooseLockfile: async () => {
-      const selected = await dialog.showOpenDialog(window, { title: '选择英雄联盟客户端目录内的 lockfile', properties: ['openFile'], filters: [{ name: '客户端 lockfile', extensions: ['*'] }] });
+      const selected = await dialog.showOpenDialog(window, { title: tr('选择英雄联盟客户端目录内的 lockfile'), properties: ['openFile'], filters: [{ name: tr('客户端 lockfile'), extensions: ['*'] }] });
       if (selected.canceled) return { canceled: true };
       return assistant.chooseLockfile(selected.filePaths[0]);
     },
     exportConfig: async () => {
-      const selected = await dialog.showSaveDialog(window, { title: '导出本地设置与预设', defaultPath: '联盟助手本地配置.json', filters: [{ name: 'JSON 配置', extensions: ['json'] }] });
+      const selected = await dialog.showSaveDialog(window, { title: tr('导出本地设置与预设'), defaultPath: tr('联盟助手本地配置.json'), filters: [{ name: tr('JSON 配置'), extensions: ['json'] }] });
       if (selected.canceled) return { canceled: true };
       fs.writeFileSync(selected.filePath, JSON.stringify(assistant.store.export(), null, 2), 'utf8'); return { exported: true };
     },
     importConfig: async () => {
-      const selected = await dialog.showOpenDialog(window, { title: '导入本地设置与预设', properties: ['openFile'], filters: [{ name: 'JSON 配置', extensions: ['json'] }] });
+      const selected = await dialog.showOpenDialog(window, { title: tr('导入本地设置与预设'), properties: ['openFile'], filters: [{ name: tr('JSON 配置'), extensions: ['json'] }] });
       if (selected.canceled) return { canceled: true };
       if (fs.statSync(selected.filePaths[0]).size > 1048576) throw new Error('配置文件过大');
       assistant.importConfig(JSON.parse(fs.readFileSync(selected.filePaths[0], 'utf8')));
@@ -118,10 +122,10 @@ app.whenReady().then(async () => {
   ownSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*', 'ftp://*/*'] }, (_details, callback) => callback({ cancel: true }));
   ownSession.on('will-download', event => event.preventDefault());
   Menu.setApplicationMenu(null);
-  assistant = new Assistant({ assets: path.join(__dirname, 'renderer', 'assets'), dataDirectory });
+  assistant = new Assistant({ assets: path.join(__dirname, 'renderer', 'assets'), dataDirectory, systemLanguage: systemLanguage() });
   smokeTrace('assistant-created');
   const windowState = readWindowState(); restoredState = windowState;
-  window = new BrowserWindow({ title: '联盟助手纯净版', width: windowState.width, height: windowState.height, useContentSize: windowState.content === true, ...(windowState.x != null ? { x: windowState.x, y: windowState.y } : { center: true }),
+  window = new BrowserWindow({ title: tr('联盟助手纯净版'), width: windowState.width, height: windowState.height, useContentSize: windowState.content === true, ...(windowState.x != null ? { x: windowState.x, y: windowState.y } : { center: true }),
     minWidth: MIN_WIDTH, minHeight: MIN_HEIGHT, backgroundColor: '#0a0e15', show: false,
     icon: path.join(__dirname, 'renderer', 'assets', 'images', 'app.ico'),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), session: ownSession, contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, allowRunningInsecureContent: false, webviewTag: false, spellcheck: false, offscreen: smoke, backgroundThrottling: !smoke }
@@ -145,7 +149,7 @@ app.whenReady().then(async () => {
   await assistant.start();
 }).catch(error => {
   try { fs.writeFileSync(path.join(dataDirectory, 'startup-error.txt'), String(error.stack || error), 'utf8'); } catch (_) {}
-  dialog.showErrorBox('启动未完成', '请确认整个纯净版文件夹已完整解压。错误信息已保存到 clean-data。'); app.quit();
+  dialog.showErrorBox(tr('启动未完成'), tr('请确认整个纯净版文件夹已完整解压。错误信息已保存到 clean-data。')); app.quit();
 });
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => { if (assistant) assistant.stop(); });

@@ -11,5 +11,9 @@
     "equip": 502,
     "jobs": 12,
     "races": 24
+  },
+  "localeDataVersions": {
+    "en": "16.20",
+    "ko": "16.20"
   }
 }
