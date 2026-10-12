@@ -1,0 +1,20 @@
+# 用户数据：设置、窗口状态、浏览器会话，绝不提交
+clean-data/
+
+# Electron 运行时（体积大，随 Release 压缩包发布）
+*.exe
+*.dll
+*.pak
+*.bin
+*.dat
+locales/
+LICENSES.chromium.html
+vk_swiftshader_icd.json
+
+# 本地备份与临时文件
+ui-backup-original/
+*.tmp
+node_modules/
+.DS_Store
+Thumbs.db
+LICENSE.electron.txt

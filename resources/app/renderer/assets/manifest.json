@@ -1,0 +1,15 @@
+{
+  "applicationVersion": "1.0.0",
+  "localDataVersion": "16.18.819.1953",
+  "counts": {
+    "heroes": 241,
+    "items": 868,
+    "runes": 108,
+    "spells": 39,
+    "augments": 552,
+    "chess": 82,
+    "equip": 502,
+    "jobs": 12,
+    "races": 24
+  }
+}
