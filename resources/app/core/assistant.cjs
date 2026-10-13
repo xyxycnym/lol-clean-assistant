@@ -12,6 +12,8 @@ const { translate } = require('../renderer/i18n.js');
 const ARAM_QUEUES = [450, 2400];
 const MAYHEM_QUEUES = [2400];
 const RARITY = { 1: 'silver', 4: 'gold', 8: 'prismatic' };
+// Recent games barely change during one champ select or game; re-reading them often only adds client load.
+const HISTORY_TTL = 5 * 60000;
 const RIFT_QUEUES = [0, 400, 420, 430, 440, 480, 490, 830, 840, 850];
 function analysisMode(queueId) { const id = Number(queueId); return ARAM_QUEUES.includes(id) ? 'aram' : RIFT_QUEUES.includes(id) ? 'ranked' : ''; }
 
@@ -32,8 +34,14 @@ function normalizeGames(value, puuid) {
     const hasResult = typeof rawWin === 'boolean' || typeof rawWin === 'string' && ['win', 'true', 'loss', 'lose', 'fail', 'false'].includes(rawWin.toLowerCase());
     return { ...game, championId: participant.championId || game.championId || 0, kills: Number(stats.kills) || 0, deaths: Number(stats.deaths) || 0, assists: Number(stats.assists) || 0,
       win: hasResult ? rawWin === true || typeof rawWin === 'string' && ['win', 'true'].includes(rawWin.toLowerCase()) : undefined, knownResult: hasResult, kda: ((Number(stats.kills) || 0) + (Number(stats.assists) || 0)) / Math.max(1, Number(stats.deaths) || 0),
-      duration: Number(game.gameDuration || game.duration) || 0, queueId: Number(game.queueId) || 0, gameId: game.gameId || game.id, stats };
+      duration: Number(game.gameDuration || game.duration) || 0, lane: laneOf(participant.timeline), queueId: Number(game.queueId) || 0, gameId: game.gameId || game.id, stats };
   });
+}
+// Match history timeline: lane TOP/JUNGLE/MIDDLE/BOTTOM, role DUO_CARRY/DUO_SUPPORT on the bottom lane.
+function laneOf(timeline) {
+  const lane = String(timeline && timeline.lane || '').toUpperCase(); const role = String(timeline && timeline.role || '').toUpperCase();
+  if (lane === 'BOTTOM' || lane === 'BOT') return role === 'DUO_SUPPORT' ? 'utility' : 'bottom';
+  return { TOP: 'top', JUNGLE: 'jungle', MIDDLE: 'middle', MID: 'middle' }[lane] || '';
 }
 function validPuuid(value) { if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{2,150}$/.test(value)) throw new Error('该玩家未提供可查询的本区身份'); return value; }
 function validId(value) { const id = Number(value); if (!Number.isSafeInteger(id) || id < 0) throw new Error('无效的编号'); return id; }
@@ -230,7 +238,7 @@ class Assistant extends EventEmitter {
   enrichInBackground() {
     if (this.enrichPromise || this.stopped || !this.state.teams.myTeam.length && !this.state.teams.enemyTeam.length) return;
     const teams = this.state.teams; const phase = this.state.connection.phase; const since = this.phaseSince;
-    const need = [...teams.myTeam, ...teams.enemyTeam].some(player => { const id = player.puuid || player.summonerId; const cached = id && this.cache.get('player:' + id); return id && (!cached || Date.now() - cached.at > 60000); });
+    const need = [...teams.myTeam, ...teams.enemyTeam].some(player => { const id = player.puuid || player.summonerId; const cached = id && this.cache.get('player:' + id); return id && (!cached || Date.now() - cached.at > HISTORY_TTL); });
     if (!need) return;
     this.enrichPromise = Promise.all([this.enrichTeam(teams.myTeam), this.enrichTeam(teams.enemyTeam)]).then(() => {
       if (this.stopped || this.state.connection.phase !== phase || this.phaseSince !== since) return;
@@ -243,12 +251,12 @@ class Assistant extends EventEmitter {
   async enrichPlayer(player) {
     const id = player.puuid || player.summonerId;
     const previous = id && this.cache.get('player:' + id);
-    let details = previous && Date.now() - previous.at < 60000 ? previous.value : null;
+    let details = previous && Date.now() - previous.at < HISTORY_TTL ? previous.value : null;
     if (!details && id) {
       const info = player.puuid ? await this.lcu.optional('/lol-summoner/v2/summoners/puuid/' + encodeURIComponent(player.puuid)) : await this.lcu.optional('/lol-summoner/v1/summoners/' + validId(player.summonerId));
       details = summonerView(info || player);
       if (details.puuid) {
-        const [rank, history] = await Promise.all([this.lcu.optional('/lol-ranked/v1/ranked-stats/' + encodeURIComponent(details.puuid)), this.lcu.optional('/lol-match-history/v1/products/lol/' + encodeURIComponent(details.puuid) + '/matches?begIndex=0&endIndex=9')]);
+        const [rank, history] = await Promise.all([this.lcu.optional('/lol-ranked/v1/ranked-stats/' + encodeURIComponent(details.puuid)), this.lcu.optional('/lol-match-history/v1/products/lol/' + encodeURIComponent(details.puuid) + '/matches?begIndex=0&endIndex=19')]);
         details.rankedInfo = rankedView(rank); details.matchHistory = history ? normalizeGames(history, details.puuid) : [];
       }
       this.cache.set('player:' + id, { at: Date.now(), value: details });

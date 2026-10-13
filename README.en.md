@@ -15,7 +15,7 @@ A League of Legends desktop assistant that talks only to the client on your own 
 
 | Feature | Description |
 |---|---|
-| **Match Board** | During champ select and in game, shows all 10 players lined up by position: rank, recent win rate, KDA and last 5 games, over champion splash art |
+| **Match Board** | During champ select and in game, shows all 10 players lined up by position: rank, recent win rate, KDA, main role and last 20 games, with win / loss streaks, results on the current champion and premade groups marked in matching colours. Only cards whose data changed are refreshed |
 | **Draft win prediction** | Once both teams are locked in, estimates your team's win rate and shows the matchup win rate for each lane; hidden enemy positions are inferred from each champion's usual role |
 | **Recommended builds** | In champ select, shows runes, summoner spells, items and skill order for your champion and applies them to the client in one click; the Champion Builds page looks up any champion |
 | **ARAM: Mayhem augments** | In ARAM: Mayhem champ select, lists the augments that suit your champion best, grouped by Prismatic / Gold / Silver (ranking from OP.GG), so you know which one to take when it shows up in game |
