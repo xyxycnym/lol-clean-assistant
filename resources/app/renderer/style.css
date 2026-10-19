@@ -36,7 +36,8 @@
 
 /* ---------- Base ---------- */
 * { box-sizing: border-box; }
-html { background: var(--bg); }
+/* Space for the scrollbar is always kept, so the page never shifts sideways when its height changes. */
+html { background: var(--bg); scrollbar-gutter: stable; }
 body {
   margin: 0; color: var(--text); line-height: 1.5; min-height: 100vh;
   background:
@@ -224,8 +225,6 @@ main { max-width: 1560px; padding: 22px 26px 32px; margin: auto; outline: none; 
 .loading-state { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 40px 20px; color: var(--muted); }
 .spinner { width: 18px; height: 18px; border: 2px solid var(--line-2); border-top-color: var(--gold); border-radius: 50%; animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-#content.entering > * { animation: rise .25s ease-out both; }
 
 /* ---------- Dashboard ---------- */
 .board-heading { margin-bottom: 14px; }
@@ -277,9 +276,6 @@ main { max-width: 1560px; padding: 22px 26px 32px; margin: auto; outline: none; 
 }
 .lane-player:not(.empty-lane):hover { border-color: var(--line-2); }
 .lane-player.my-player { border-color: rgba(200, 170, 110, .5); background: linear-gradient(180deg, rgba(200, 170, 110, .07), transparent 120px), var(--panel); }
-/* A changed card flashes bright once, then settles. */
-.lane-player.flash { animation: card-flash .7s ease-out; }
-@keyframes card-flash { 0% { filter: brightness(1.55); } 100% { filter: brightness(1); } }
 .lane-player.empty-lane {
   align-items: center; justify-content: center; min-height: 300px;
   font-size: 13px; color: var(--faint); background: var(--bg-2); border-style: dashed;
@@ -313,7 +309,8 @@ main { max-width: 1560px; padding: 22px 26px 32px; margin: auto; outline: none; 
 .pc-stats small { display: block; margin-top: 2px; font-size: 10.5px; line-height: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Tags */
-.pc-tags { display: flex; flex-wrap: wrap; gap: 4px; min-height: 20px; margin-bottom: 6px; }
+/* Fixed height (two rows of tags) so a tag appearing never changes the card's size or pushes the layout around. */
+.pc-tags { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 4px; height: 42px; overflow: hidden; margin-bottom: 4px; }
 .chip { font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: 4px; white-space: nowrap; color: var(--text-2); background: var(--panel-3); }
 .chip.good { color: var(--green); background: var(--win-bg); }
 .chip.bad { color: var(--red); background: var(--loss-bg); }

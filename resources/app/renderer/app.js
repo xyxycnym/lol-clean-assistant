@@ -104,7 +104,7 @@
   let autoFeedback = '';
   const autoSwitches = ['autoAccept', 'autoStart', 'autoAgain', 'autoPick', 'autoBan', 'pickHoverOnly', 'pickAtLastSecond', 'banAtLastSecond', 'avoidTeamHover'];
   let boardSignature = '';
-  let renderedPage = '';
+  const slotMemory = new Map();
   let activitySignature = '';
   let presetKind = 'rune';
   let runeDraft = null;
@@ -332,7 +332,6 @@
     const aggregate = playerAggregate(player);
     const own = state.me && player.puuid && player.puuid === state.me.puuid;
     const records = aggregate.records;
-    const scores = player.scores;
     const solo = rankQueue(player.rankedInfo, 'RANKED_SOLO_5x5'), flex = rankQueue(player.rankedInfo, 'RANKED_FLEX_SR');
     const name = player.gameName || player.summonerName || playerName(player);
     const riotId = playerName(player);
@@ -346,7 +345,6 @@
     const [favorite, favoriteGames] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0] || [0, 0];
     const tags = [];
     if (party) tags.push(`<span class="chip party" title="${esc(party.mates.join('、'))}">组队 ${party.number}</span>`);
-    if (scores) tags.push(`<span class="chip">本局 ${number(scores.kills)}/${number(scores.deaths)}/${number(scores.assists)}</span>`);
     if (streak >= 3) tags.push(`<span class="chip ${decided[0].win ? 'good' : 'bad'}">${streak}${decided[0].win ? '连胜' : '连败'}</span>`);
     if (onChampion.length >= 2) { const rate = Math.round(onChampion.filter(game => game.win).length / onChampion.length * 100); tags.push(`<span class="chip${rate >= 60 ? ' good' : rate <= 40 ? ' bad' : ''}">本英雄 ${onChampion.length}场 ${rate}%</span>`); }
     if (favoriteGames >= 8 && number(favorite) !== number(player.championId)) tags.push(`<span class="chip">常玩 ${esc(heroName(favorite))}</span>`);
@@ -365,7 +363,19 @@
     const placed = new Map();
     const unknown = [];
     const guess = player => { const side = team === 'enemyTeam' ? 'enemy' : 'mine'; const lane = state.prediction && state.prediction.lanes && state.prediction.lanes.find(item => item[side].championId === number(player.championId)); return lane ? (Object.entries(roleToPosition).find(([, position]) => position === lane.position) || [''])[0] : ''; };
-    players.forEach((player,index) => { const role=normalizedRole(player)||guess(player); if(role&&!placed.has(role))placed.set(role,{player,index});else unknown.push({player,index}); });
+    // A player keeps the lane they were first shown in; only a position reported by the client moves them.
+    // Players without a known position fill the free lanes in order instead of dropping out of the grid.
+    const remembered = slotMemory.get(team) || new Map(); slotMemory.set(team, remembered);
+    const id = player => String(player.puuid || player.summonerId || playerName(player));
+    const pending = [];
+    // Lanes from the client or the draft estimate are firm; a lane given only to fill a gap may be corrected once.
+    const firm = new Set();
+    const entries = players.map((player,index) => { const memory = remembered.get(id(player)); return {player, index, known: normalizedRole(player) || (memory && memory.firm ? memory.role : '') || guess(player), filled: memory && !memory.firm ? memory.role : ''}; });
+    for (const entry of entries) if (entry.known && !placed.has(entry.known)) { placed.set(entry.known, entry); firm.add(entry.known); entry.done = true; }
+    for (const entry of entries) if (!entry.done && entry.filled && !placed.has(entry.filled)) { placed.set(entry.filled, entry); entry.done = true; }
+    for (const entry of entries) if (!entry.done) pending.push(entry);
+    pending.forEach(entry => { const free = boardRoles.find(([role]) => !placed.has(role)); if (free) placed.set(free[0], entry); else unknown.push(entry); });
+    for (const [role, entry] of placed) remembered.set(id(entry.player), {role, firm: firm.has(role)});
     return `<section class="board-team${team === 'enemyTeam' ? ' enemy' : ''}" data-key="${team}"><div class="team-heading"><strong>${esc(name)}</strong></div><div class="lane-grid">${boardRoles.map(([role])=>{const entry=placed.get(role);return lanePlayer(entry&&entry.player,team,entry&&entry.index,role,entry&&parties.get(entry.index));}).join('')}</div></section>${unknown.length ? `<details class="unknown-players" data-remember="${team}"><summary>${esc(name)} · 位置未公开 / 重复位置（${unknown.length}）</summary><div class="unknown-list">${unknown.map(({player,index})=>lanePlayer(player,team,index,'',parties.get(index))).join('')}</div></details>` : ''}`;
   }
   function activityHtml() {
@@ -373,7 +383,7 @@
   }
   function boardStateSignature() { return JSON.stringify({connected:connected(),phase:state.connection.phase,queueId:state.queueId,message:connected()?'':state.connection.message,me:state.me,teams:state.teams,recommendation:state.recommendation,prediction:state.prediction,dataVersion}); }
   // Brings the live board in line with freshly rendered markup without rebuilding it: elements carrying data-sig
-  // (player cards) are swapped only when their content changed and flash once; everything else is updated in place,
+  // (player cards) are swapped only when their content changed; everything else is updated in place,
   // so scroll positions, open panels and loaded images stay as they are.
   function syncAttributes(current, next) {
     const saved = originalLabels.get(current) || {};
@@ -397,10 +407,8 @@
       if (node.dataset.sig != null) {
         if (node.dataset.sig === existing.dataset.sig) return;
         const list = existing.querySelector('.pc-games'), scroll = list ? list.scrollTop : 0;
-        if (existing.dataset.sig !== 'empty' || node.dataset.sig !== 'empty') node.classList.add('flash');
         current.replaceChild(node, existing);
         const fresh = node.querySelector('.pc-games'); if (fresh && scroll) fresh.scrollTop = scroll;
-        node.addEventListener('animationend', () => node.classList.remove('flash'), {once: true});
         return;
       }
       syncAttributes(existing, node);
@@ -417,17 +425,17 @@
       patchChildren(content,template.content);
       activitySignature=JSON.stringify(state.actions||[]);
     }
-    const clock=document.getElementById('board-clock'); if(clock)clock.textContent=state.live&&state.live.gameData ? duration(state.live.gameData.gameTime) : '';
     const nextActions=JSON.stringify(state.actions||[]);const list=document.getElementById('dashboard-log-list');if(list&&nextActions!==activitySignature){list.innerHTML=activityHtml();activitySignature=nextActions;}
   }
   function dashboardHtml() {
     const mine=state.teams.myTeam||[],enemy=state.teams.enemyTeam||[];
     const hasPlayers=mine.length||enemy.length;
     const noLanes=[450,900,1020,1090,1100,1130,1160,1700,1710,1900,2400].includes(number(state.queueId));
-    const meta=connected()&&hasPlayers?`<div class="board-meta">${state.queueId!=null?`<span>${esc(queueName(state.queueId))}</span>`:''}<span>${esc(phaseNames[state.connection.phase]||'客户端已连接')}</span><span class="num" id="board-clock">${state.live&&state.live.gameData?duration(state.live.gameData.gameTime):''}</span></div>`:'';
+    const meta=connected()&&hasPlayers?`<div class="board-meta">${state.queueId!=null?`<span>${esc(queueName(state.queueId))}</span>`:''}<span>${esc(phaseNames[state.connection.phase]||'客户端已连接')}</span></div>`:'';
     const start=heading('对局看板','','',meta);
     const shortcuts=`<div class="local-shortcuts"><button type="button" class="shortcut" data-page="catalog">${icon('book')}<span><strong>浏览本地资料</strong></span></button><button type="button" class="shortcut" data-page="presets">${icon('preset')}<span><strong>管理符文与出装</strong></span></button><button type="button" class="shortcut" data-page="automation">${icon('settings')}<span><strong>配置自动化</strong></span></button></div>`;
     if(!connected())return start+`<section class="offline-start"><h2>未连接游戏客户端</h2><p>${esc(state.connection.message||'请先打开并登录游戏客户端。')}</p><div class="row"><button type="button" class="button" data-action="refresh">刷新连接</button><button type="button" class="button ghost" data-action="choose-lockfile">手动连接</button></div>${shortcuts}</section>`;
+    if(!hasPlayers)slotMemory.clear();
     const ours=partyGroups(mine,0), theirs=partyGroups(enemy,ours.next);
     return start+forecastHtml()+(hasPlayers?`<div class="lane-labels">${boardRoles.map(([role,label],index)=>`<span>${noLanes?`玩家 ${index+1}`:label}${noLanes?'':laneForecast(role)}</span>`).join('')}</div>${boardTeamHtml(mine,'我方队伍','myTeam',ours.groups)}${boardTeamHtml(enemy,'敌方队伍','enemyTeam',theirs.groups)}${recommendationHtml()}`:`<section class="offline-start"><h2>等待进入英雄选择</h2><button type="button" class="button" data-page="history">查询本区战绩</button>${shortcuts}</section>`)+`<details class="activity-section" data-remember="activity"><summary>最近操作</summary><div id="dashboard-log-list">${activityHtml()}</div></details>`;
   }
@@ -729,8 +737,6 @@
     if (loadError && !ready) { content.innerHTML = heading('本地助手', '', '') + `<div class="notice warning"><strong>无法打开助手</strong><p>${esc(loadError)}</p></div>`; return; }
     const renderers = {dashboard: dashboardHtml, history: historyHtml, builds: buildsHtml, automation: automationHtml, catalog: catalogHtml, presets: presetsHtml, tools: toolsHtml};
     content.innerHTML = renderers[page]();
-    // Only switching pages plays the entrance animation; re-renders of the same page stay still.
-    if (page !== renderedPage) { renderedPage = page; content.classList.remove('entering'); void content.offsetWidth; content.classList.add('entering'); }
     if(page==='dashboard'){boardSignature=boardStateSignature();activitySignature=JSON.stringify(state.actions||[]);}
     updateHeader();
   }

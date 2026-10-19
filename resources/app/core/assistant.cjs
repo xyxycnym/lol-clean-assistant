@@ -12,6 +12,7 @@ const { translate } = require('../renderer/i18n.js');
 const ARAM_QUEUES = [450, 2400];
 const MAYHEM_QUEUES = [2400];
 const RARITY = { 1: 'silver', 4: 'gold', 8: 'prismatic' };
+const IN_GAME = ['GameStart', 'InProgress', 'Reconnect', 'WaitingForStats', 'PreEndOfGame', 'EndOfGame'];
 // Recent games barely change during one champ select or game; re-reading them often only adds client load.
 const HISTORY_TTL = 5 * 60000;
 const RIFT_QUEUES = [0, 400, 420, 430, 440, 480, 490, 830, 840, 850];
@@ -48,7 +49,7 @@ function validId(value) { const id = Number(value); if (!Number.isSafeInteger(id
 function rankedView(value) { if (value && value.queues && !Array.isArray(value.queues) && typeof value.queues === 'object') return { ...value, queues: Object.entries(value.queues).map(([queueType, info]) => ({ ...info, queueType: info.queueType || queueType })) }; return value; }
 function roleOf(player) {
   const names = { top: 'top', 上: 'top', 上单: 'top', jungle: 'jungle', jug: 'jungle', 打野: 'jungle', 野: 'jungle', middle: 'middle', mid: 'middle', 中: 'middle', 中单: 'middle', bottom: 'bottom', bot: 'bottom', adc: 'bottom', 下: 'bottom', 下路: 'bottom', utility: 'utility', support: 'utility', sup: 'utility', 辅: 'utility', 辅助: 'utility' };
-  for (const value of [player.assignedPosition, player.position, player.currentPosition, player.teamPosition]) { const found = names[String(value || '').toLowerCase()]; if (found) return found; }
+  for (const value of [player.assignedPosition, player.position, player.selectedPosition, player.currentPosition, player.teamPosition]) { const found = names[String(value || '').toLowerCase()]; if (found) return found; }
   return '';
 }
 
@@ -86,7 +87,7 @@ class Assistant extends EventEmitter {
       if (changed) {
         this.catalogs.clear(); this.state.gameData = this.gameData.info(this.language());
         for (const kind of Object.keys(this.state.catalogCounts)) { try { this.state.catalogCounts[kind] = this.getCatalog(kind).length; } catch (_) {} }
-        this.action('游戏数据已更新到 ' + this.state.gameData.version); this.emit('state', this.snapshot());
+        this.action('游戏数据已更新到 ' + this.state.gameData.version); this.publish();
       }
       return changed;
     }).catch(error => { if (force) throw error; this.action('游戏数据同步未完成：' + error.message); return false; });
@@ -138,14 +139,14 @@ class Assistant extends EventEmitter {
         this.analysisKey = key; this.state.recommendation = { championId: ownChampion, position, mode, loading: true };
         if (MAYHEM_QUEUES.includes(Number(this.state.queueId))) {
           this.state.recommendation.mayhem = true;
-          this.getMayhemAugments(ownChampion).then(augments => { if (this.analysisKey === key) { this.state.recommendation = { ...this.state.recommendation, augments }; this.emit('state', this.snapshot()); } })
-            .catch(error => { if (this.analysisKey === key) { this.state.recommendation = { ...this.state.recommendation, augmentsError: error.message }; this.emit('state', this.snapshot()); } });
+          this.getMayhemAugments(ownChampion).then(augments => { if (this.analysisKey === key) { this.state.recommendation = { ...this.state.recommendation, augments }; this.publish(); } })
+            .catch(error => { if (this.analysisKey === key) { this.state.recommendation = { ...this.state.recommendation, augmentsError: error.message }; this.publish(); } });
         }
         (async () => {
           // Position not assigned (normal draft, custom): use the champion's most played role.
           return this.opgg.build(ownChampion, position || await this.mainPosition(ownChampion, mode), this.opggOptions(mode));
-        })().then(build => { if (this.analysisKey === key) { this.state.recommendation = { ...this.state.recommendation, loading: false, position: build.position, build }; this.emit('state', this.snapshot()); } })
-          .catch(error => { if (this.analysisKey === key) { this.state.recommendation = { ...this.state.recommendation, loading: false, error: error.message }; this.emit('state', this.snapshot()); } });
+        })().then(build => { if (this.analysisKey === key) { this.state.recommendation = { ...this.state.recommendation, loading: false, position: build.position, build }; this.publish(); } })
+          .catch(error => { if (this.analysisKey === key) { this.state.recommendation = { ...this.state.recommendation, loading: false, error: error.message }; this.publish(); } });
       }
     }
     const complete = team => team.length === 5 && team.every(player => Number(player.championId) > 0);
@@ -164,17 +165,17 @@ class Assistant extends EventEmitter {
         builds.forEach((build, index) => { if (build) counters[draft.mine[index].championId] = build.counters; });
       }
       return predict({ ...draft, meta, counters, lanes: mode !== 'aram' });
-    })().then(result => { if (this.predictionKey === key) { this.state.prediction = result; this.emit('state', this.snapshot()); } })
-      .catch(error => { if (this.predictionKey === key) { this.state.prediction = { error: error.message }; this.emit('state', this.snapshot()); } });
+    })().then(result => { if (this.predictionKey === key) { this.state.prediction = result; this.publish(); } })
+      .catch(error => { if (this.predictionKey === key) { this.state.prediction = { error: error.message }; this.publish(); } });
   }
   action(message) { this.state.actions.unshift({ at: new Date().toISOString(), message: String(message).slice(0, 240) }); this.state.actions = this.state.actions.slice(0, 30); }
   saveSettings(value) {
     const before = this.language();
     this.state.settings = this.store.save(value); this.settingsRevision++;
     if (this.language() !== before) { this.state.gameData = this.gameData.info(this.language()); this.analysisKey = ''; }
-    this.emit('state', this.snapshot()); return clone(this.state.settings);
+    this.publish(); return clone(this.state.settings);
   }
-  importConfig(value) { this.state.settings = this.store.import(value); this.settingsRevision++; this.emit('state', this.snapshot()); return clone(this.state.settings); }
+  importConfig(value) { this.state.settings = this.store.import(value); this.settingsRevision++; this.publish(); return clone(this.state.settings); }
   chooseLockfile(file) { parseLockfile(file); this.store.setLockfile(file); this.lcu.lockfile = file; this.settingsRevision++; this.lcu.disconnect(); return this.refresh(); }
   async start() { if (this.running) return; this.running = true; this.stopped = false; await this.refresh(); if (!this.running || this.stopped) return; this.timer = setInterval(() => this.refresh().catch(() => {}), 1000); }
   stop() { this.running = false; this.stopped = true; this.settingsRevision++; clearInterval(this.timer); }
@@ -188,7 +189,7 @@ class Assistant extends EventEmitter {
       if (!credentials) {
         this.state.connection = { connected: false, phase: 'None', message: '未发现英雄联盟客户端；打开并登录后会自动连接，也可手动选择 lockfile' };
         this.state.me = null; this.state.teams = { myTeam: [], enemyTeam: [] }; this.state.live = null; this.state.queueId = null;
-        this.emit('state', this.snapshot()); return this.snapshot();
+        return this.publish();
       }
       const phase = await this.lcu.request('/lol-gameflow/v1/gameflow-phase');
       if (typeof phase !== 'string') throw new Error('客户端尚未进入可读取状态');
@@ -204,25 +205,54 @@ class Assistant extends EventEmitter {
       if (['InProgress', 'GameStart', 'Reconnect', 'WaitingForStats', 'PreEndOfGame', 'EndOfGame'].includes(phase)) flow = await this.lcu.optional('/lol-gameflow/v1/session');
       this.state.queueId = (flow && flow.gameData && flow.gameData.queue && flow.gameData.queue.id) ?? (session && session.queueId) ?? null;
       await this.automate(phase, session, flow);
-      if (session) {
+      const gameId = IN_GAME.includes(phase) && flow && flow.gameData && flow.gameData.gameId || 0;
+      if (!gameId) this.frozen = null;
+      if (gameId && this.frozen && this.frozen.gameId === gameId) {
+        // Line-ups are final once the game has started: the board built for this game is kept as it is.
+        // Only players whose details or position were still missing are filled in, after which nothing changes.
+        if (!this.frozen.complete) this.fillFrozenTeams(phase);
+      } else if (session) {
         this.state.teams = { myTeam: (session.myTeam || []).map(player => this.cachedPlayer(player)), enemyTeam: (session.theirTeam || []).map(player => this.cachedPlayer(player)) };
       } else if (flow && flow.gameData) {
         const first = flow.gameData.teamOne || [], second = flow.gameData.teamTwo || [];
         const ownFirst = first.some(player => player.puuid && me && player.puuid === me.puuid || player.summonerId && me && player.summonerId === me.summonerId);
         this.state.teams = { myTeam: (ownFirst ? first : second).map(player => this.cachedPlayer(player)), enemyTeam: (ownFirst ? second : first).map(player => this.cachedPlayer(player)) };
+        if (gameId) this.frozen = { gameId, complete: false, since: Date.now() };
       } else { this.state.teams = { myTeam: [], enemyTeam: [] }; }
+      if (phase !== 'InProgress') this.state.live = null;
+      // The in-game data is read only while some position or player is still unknown, never once the board is complete.
+      else if (!(this.frozen && this.frozen.complete) && Date.now() - this.lastLive > 5000) {
+        this.lastLive = Date.now(); try { this.state.live = await this.liveReader() || this.state.live; } catch (_) {}
+        if (this.state.live && Array.isArray(this.state.live.allPlayers)) { if (!this.state.teams.myTeam.length) this.liveTeams(); else this.mergeLivePlayers(); }
+      }
+      this.stickyPositions(phase);
       this.enrichInBackground();
       this.analyzeInBackground(phase, session);
-      if (phase === 'InProgress' && Date.now() - this.lastLive > 5000) {
-        this.lastLive = Date.now(); try { this.state.live = await this.liveReader(); } catch (_) { this.state.live = null; }
-        if (this.state.live && Array.isArray(this.state.live.allPlayers)) { if (!this.state.teams.myTeam.length) this.liveTeams(); else this.mergeLivePlayers(); }
-      } else if (phase !== 'InProgress') { this.state.live = null; }
-      this.emit('state', this.snapshot()); return this.snapshot();
+      this.failures = 0;
+      return this.publish();
     } catch (error) {
+      // One slow or failed request is not a disconnect: keep the board as it is and try again on the next poll.
+      this.failures = (this.failures || 0) + 1;
+      if (this.failures < 3 && this.state.connection.connected) return this.snapshot();
       this.lcu.disconnect(); this.state.connection = { connected: false, phase: 'None', message: error.message };
       this.state.me = null; this.state.teams = { myTeam: [], enemyTeam: [] }; this.state.live = null; this.state.queueId = null;
-      this.emit('state', this.snapshot()); return this.snapshot();
+      return this.publish();
     }
+  }
+  // Sends the state to the window only when it actually changed; an unchanged poll sends nothing.
+  publish() {
+    const snapshot = this.snapshot(); delete snapshot.live;
+    const text = JSON.stringify(snapshot);
+    if (text !== this.published) { this.published = text; this.emit('state', snapshot); }
+    return snapshot;
+  }
+  fillFrozenTeams() {
+    const fill = player => ({ ...this.cachedPlayer(player), position: player.position });
+    this.state.teams = { myTeam: this.state.teams.myTeam.map(fill), enemyTeam: this.state.teams.enemyTeam.map(fill) };
+    const players = [...this.state.teams.myTeam, ...this.state.teams.enemyTeam];
+    const loaded = players.every(player => { const id = player.puuid || player.summonerId; return !id || this.cache.has('player:' + id); });
+    const placed = players.every(player => player.position) || Date.now() - this.frozen.since > 90000 || this.state.queueId != null && [450, 900, 1700, 1710, 1900, 2400].includes(Number(this.state.queueId));
+    if (loaded && placed) this.frozen.complete = true;
   }
   async enrichTeam(players) {
     // A bounded batch reads only identities that the client itself exposes.
@@ -238,14 +268,15 @@ class Assistant extends EventEmitter {
   enrichInBackground() {
     if (this.enrichPromise || this.stopped || !this.state.teams.myTeam.length && !this.state.teams.enemyTeam.length) return;
     const teams = this.state.teams; const phase = this.state.connection.phase; const since = this.phaseSince;
-    const need = [...teams.myTeam, ...teams.enemyTeam].some(player => { const id = player.puuid || player.summonerId; const cached = id && this.cache.get('player:' + id); return id && (!cached || Date.now() - cached.at > HISTORY_TTL); });
+    // During a game each player is read once; history is only refreshed between games.
+    const need = [...teams.myTeam, ...teams.enemyTeam].some(player => { const id = player.puuid || player.summonerId; const cached = id && this.cache.get('player:' + id); return id && (!cached || !this.frozen && Date.now() - cached.at > HISTORY_TTL); });
     if (!need) return;
     this.enrichPromise = Promise.all([this.enrichTeam(teams.myTeam), this.enrichTeam(teams.enemyTeam)]).then(() => {
       if (this.stopped || this.state.connection.phase !== phase || this.phaseSince !== since) return;
       this.state.teams = { myTeam: this.state.teams.myTeam.map(player => this.cachedPlayer(player)), enemyTeam: this.state.teams.enemyTeam.map(player => this.cachedPlayer(player)) };
       const own = this.state.me && this.state.teams.myTeam.find(player => player.puuid === this.state.me.puuid);
       if (own && own.rankedInfo) this.state.me.rankedInfo = own.rankedInfo;
-      this.emit('state', this.snapshot());
+      this.publish();
     }).catch(() => {}).finally(() => { this.enrichPromise = null; });
   }
   async enrichPlayer(player) {
@@ -268,7 +299,7 @@ class Assistant extends EventEmitter {
   liveTeams() {
     const heroes = this.getCatalog('heroes'); const currentName = this.state.live.activePlayer && this.state.live.activePlayer.summonerName;
     const own = this.state.live.allPlayers.find(player => player.summonerName === currentName);
-    const view = player => summonerView({ gameName: player.riotIdGameName || player.summonerName, tagLine: player.riotIdTagLine || '', championId: (heroes.find(hero => hero.name === player.championName || hero.alias === player.championName) || {}).id || 0, position: roleOf(player), scores: player.scores, championName: player.championName, live: true, matchHistory: [] });
+    const view = player => summonerView({ gameName: player.riotIdGameName || player.summonerName, tagLine: player.riotIdTagLine || '', championId: (heroes.find(hero => hero.name === player.championName || hero.alias === player.championName) || {}).id || 0, position: roleOf(player), championName: player.championName, live: true, matchHistory: [] });
     this.state.teams = { myTeam: this.state.live.allPlayers.filter(player => player.team === (own && own.team || 'ORDER')).map(view), enemyTeam: this.state.live.allPlayers.filter(player => player.team !== (own && own.team || 'ORDER')).map(view) };
   }
   mergeLivePlayers() {
@@ -277,9 +308,19 @@ class Assistant extends EventEmitter {
       const riotId = (player.gameName || player.summonerName || '') + (player.tagLine ? '#' + player.tagLine : '');
       const matches = players.filter(live => (live.riotId || (live.riotIdGameName ? live.riotIdGameName + (live.riotIdTagLine ? '#' + live.riotIdTagLine : '') : live.summonerName)) === riotId);
       if (matches.length !== 1) return player;
-      const live = matches[0]; return { ...player, position: roleOf(live) || player.position, scores: live.scores, championName: live.championName };
+      const live = matches[0]; return { ...player, position: player.position || roleOf(live), championName: live.championName };
     };
     this.state.teams = { myTeam: this.state.teams.myTeam.map(merge), enemyTeam: this.state.teams.enemyTeam.map(merge) };
+  }
+  // Once a player's position is known during a champ select or game it stays put, so cards never hop between lanes.
+  stickyPositions(phase) {
+    const players = [...this.state.teams.myTeam, ...this.state.teams.enemyTeam];
+    if (!players.length || ['None', 'Lobby', 'Matchmaking', 'ReadyCheck'].includes(phase)) { this.positions = new Map(); return; }
+    if (!this.positions) this.positions = new Map();
+    for (const player of players) {
+      const id = player.puuid || player.summonerId || player.displayName; if (!id) continue;
+      if (player.position) this.positions.set(id, player.position); else if (this.positions.has(id)) player.position = this.positions.get(id);
+    }
   }
   async getHistory(puuid, begin = 0) {
     validPuuid(puuid); begin = Math.max(0, Math.min(990, Math.floor(Number(begin) || 0)));
